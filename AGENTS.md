@@ -7,7 +7,7 @@ Shared coding-agent guidance for AFK CLI.
 AFK CLI persists one user-owned PTY process across SSH disconnections.
 
 - Binary name: `afk`
-- Repository/package name: `afk-cli` / `afk-session` as documented
+- Repository and Cargo package name: `afk-cli`
 - No hosted backend or account
 - No TCP/UDP listener
 - No machine-wide daemon

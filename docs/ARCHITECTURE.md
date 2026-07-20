@@ -547,6 +547,17 @@ This keeps release behavior predictable and avoids transferring PTY descriptors 
 
 ## 14. Build and release artifacts
 
+The Cargo package is named `afk-cli` and declares a binary target named `afk`:
+
+```toml
+[package]
+name = "afk-cli"
+
+[[bin]]
+name = "afk"
+path = "src/main.rs"
+```
+
 AFK publishes one executable per target, not one universal binary.
 
 Initial targets:
