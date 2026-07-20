@@ -20,6 +20,8 @@ AFK CLI is in architecture and security review. It is not ready for production u
 
 The repository will produce a self-contained executable named **`afk`**. It will not require a hosted service, open a network port, or run a machine-wide daemon. One user-owned runner process exists for each persistent terminal session.
 
+AFK CLI is client-agnostic. Its human CLI and public wire protocol are intended to be complete integration surfaces; no particular SSH client or unpublished integration behavior is required.
+
 ## Planned commands
 
 ```bash
@@ -48,7 +50,7 @@ A standalone wire-protocol specification will be added before implementation is 
 - The PTY is always drained so a disconnected client cannot block the shell.
 - Replay, snapshots, queues, and protocol frames are bounded.
 - Reattachment never silently creates a replacement shell.
-- No telemetry or hosted AFK dependency.
+- No telemetry, hosted AFK dependency, or dependency on a particular SSH client.
 
 ## Open source
 

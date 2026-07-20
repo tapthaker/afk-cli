@@ -4,7 +4,7 @@ AFK CLI is security-sensitive infrastructure: it owns a remote PTY, parses untru
 
 ## Current phase
 
-The project is currently reviewing architecture and threat model before implementation. Design feedback is welcome through focused issues or pull requests.
+The project is currently reviewing architecture and threat model before implementation. Design feedback is welcome through focused issues or pull requests. Proposals must describe behavior through the public CLI and protocol rather than assumptions about a particular or unpublished client integration.
 
 ## Contribution workflow
 

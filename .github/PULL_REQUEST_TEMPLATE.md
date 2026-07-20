@@ -16,7 +16,7 @@
 
 ## Documentation
 
-- [ ] Public behavior is documented.
+- [ ] Public behavior is documented without relying on unpublished client behavior.
 - [ ] Threat model is updated when trust boundaries or controls change.
 - [ ] Tests cover success and failure paths.
 - [ ] No terminal bytes, input, environment values, credentials, or private fixtures were added.

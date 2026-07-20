@@ -23,6 +23,7 @@ The SSH client reconnects and attaches to the same runner. Shell state, working 
 AFK is deliberately narrower than a general-purpose terminal multiplexer or remote administration agent:
 
 - it does not implement SSH;
+- it does not depend on a particular SSH client or private integration;
 - it does not open a TCP or UDP port;
 - it does not require a hosted relay or account;
 - it does not run a machine-wide daemon;
@@ -46,6 +47,7 @@ Its job is process continuity across SSH disconnections.
 10. **Failures are honest.** AFK never claims continuity when the host's process policy prevents it.
 11. **No terminal recording by default.** Terminal output and input are not written to disk.
 12. **Open development.** Protocol, threat model, build, tests, and release provenance are public and reviewable.
+13. **Client-agnostic integration.** The human CLI and published wire protocol are complete integration contracts; no unpublished client behavior is required.
 
 ## 3. Terminology
 
@@ -592,7 +594,7 @@ Every release includes:
 
 ## 15. Installation
 
-AFK may be installed manually by package manager, release download, or another SSH client. A generic managed installer should:
+AFK may be installed manually by a package manager, from a release download, or by an independent integration. A generic managed installer should:
 
 1. detect OS and architecture through a fixed probe;
 2. select a release-manifest artifact;
@@ -603,7 +605,7 @@ AFK may be installed manually by package manager, release download, or another S
 7. atomically activate at `~/.local/lib/afk/afk`;
 8. retain a bounded rollback artifact.
 
-Installation must be explicit. AFK CLI itself contains no auto-update service. An external client or user performs updates.
+Installation must be explicit. AFK CLI itself contains no auto-update service. A user or separately managed integration performs updates.
 
 Removing the executable does not kill already running Unix processes. Removal tooling must explain and handle live sessions explicitly.
 
@@ -718,6 +720,7 @@ Before the first stable release, the repository must contain:
 - code of conduct if a broader community forms;
 - public CI definitions;
 - test and fuzz corpora that contain no private terminal data;
+- interoperability fixtures that require no private client code or unpublished behavior;
 - benchmark method and results;
 - release and compatibility policy;
 - decision records for security- or protocol-significant choices.

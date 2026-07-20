@@ -9,6 +9,7 @@ AFK CLI persists one user-owned PTY process across SSH disconnections.
 - Binary name: `afk`
 - Repository and Cargo package name: `afk-cli`
 - No hosted backend or account
+- No dependency on a particular SSH client or private integration
 - No TCP/UDP listener
 - No machine-wide daemon
 - No telemetry

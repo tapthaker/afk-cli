@@ -145,7 +145,7 @@ Controls:
 - bounds on OSC/DCS/APC and snapshot state;
 - terminal parser fuzzing;
 - raw bytes never used as logs or shell commands;
-- mobile/human terminal receives only protocol-authorized output and snapshots.
+- attached terminals receive only protocol-authorized output and snapshots.
 
 Terminal emulators inherently process untrusted escape sequences; parser quality is security-critical.
 
