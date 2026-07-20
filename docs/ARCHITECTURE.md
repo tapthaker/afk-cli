@@ -738,6 +738,8 @@ Unsafe Rust is denied by default. A narrowly scoped exception requires documente
 
 ## 20. Delivery plan
 
+[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) defines the proposed Rust module boundaries, dependency policy, musl build strategy, and review-sized delivery sequence for these phases.
+
 ### Phase 0: process survival spike
 
 - Initialize Rust package producing binary `afk`.
