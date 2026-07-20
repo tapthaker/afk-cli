@@ -1,0 +1,39 @@
+name: Bug report
+description: Report incorrect AFK CLI behavior that is not security-sensitive
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include terminal contents, credentials, private hostnames, or exploit details. Report suspected vulnerabilities through GitHub private vulnerability reporting."
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Synthetic reproduction
+      description: Use synthetic commands and redacted host information.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: AFK CLI version or commit
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+    validations:
+      required: true

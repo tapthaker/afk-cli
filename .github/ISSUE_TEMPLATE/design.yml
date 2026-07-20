@@ -1,0 +1,40 @@
+name: Design proposal
+description: Propose a CLI, protocol, lifecycle, terminal, security, or release change
+title: "design: "
+labels: [design]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user problem independently of a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe behavior, invariants, limits, and alternatives.
+    validations:
+      required: true
+  - type: textarea
+    id: failure
+    attributes:
+      label: Failure and security considerations
+      description: Cover disconnects, malformed input, resource exhaustion, rollback, and privacy.
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility
+      description: Explain wire, CLI, runtime-file, snapshot, and rolling-upgrade effects.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation plan
+      description: List unit, integration, SSH E2E, fuzz, artifact, or benchmark evidence.
+    validations:
+      required: true
