@@ -23,6 +23,12 @@ path = "src/lib.rs"
 name = "afk"
 path = "src/main.rs"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1.4", features = ["event", "fs", "net", "process", "pty", "stdio", "termios"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+signal-hook = "0.3.18"
+
 [lints.rust]
 unsafe_code = "deny"
 

@@ -71,7 +71,7 @@ Use the standard library where it remains clear. Expected dependencies are:
 | Need | Candidate | Rule |
 | --- | --- | --- |
 | Unix and PTY operations | `rustix` | Enable only required features. |
-| Pollable signal wakeups | `signal-hook` | Self-pipe only; no signal thread. |
+| Signal registration | `signal-hook` | Atomic flags only; no signal thread. |
 | CLI parsing | `lexopt` | Add only if the current parser becomes unclear. |
 | Metadata JSON | `serde`, `serde_json` | Cap file size before parsing; never serialize terminal data. |
 
@@ -112,7 +112,7 @@ No terminal state is reconstructed. Live reattach receives the raw tail followed
 
 The attachment receives `SIGWINCH` when `sshd` changes the outer PTY. It reads that PTY with `TIOCGWINSZ` and sends rows and columns to the runner. The runner applies them to the inner PTY with `TIOCSWINSZ`; the kernel then signals the inner foreground process group.
 
-No other interactive signal is proxied. Control characters remain input bytes, allowing the inner PTY to generate `SIGINT`, `SIGTSTP`, and `SIGQUIT`. Termination of the attachment closes only the attachment socket. A `signal-hook` self-pipe wakes the same single-threaded poll loop.
+No other interactive signal is proxied. Control characters remain input bytes, allowing the inner PTY to generate `SIGINT`, `SIGTSTP`, and `SIGQUIT`. Termination of the attachment closes only the attachment socket. `signal-hook` sets atomic flags; signal interruption and the bounded poll timeout return control to the same single-threaded loop without a signal thread.
 
 ## 5. Review-sized steps
 
@@ -125,7 +125,7 @@ No other interactive signal is proxied. Control characters remain input bytes, a
 - Cargo Deny and pinned CI actions;
 - static x86-64 and AArch64 musl builds.
 
-### Step 1A: limits, identity, and IPC
+### Step 1A: limits, identity, and IPC — complete
 
 - Add constants for record, queue, output-tail, metadata, dimensions, path, and argv bounds.
 - Add `SessionId([u8; 16])` lowercase hexadecimal display and strict parsing.
@@ -134,7 +134,7 @@ No other interactive signal is proxied. Control characters remain input bytes, a
 
 Exit: malformed IPC cannot allocate above its limit or enter runner state.
 
-### Step 1B: runtime registry
+### Step 1B: runtime registry — implemented, hostile-filesystem tests pending
 
 - Resolve and validate the home-relative runtime root.
 - Create it with mode 0700 and verify ownership.
@@ -146,7 +146,7 @@ Exit: malformed IPC cannot allocate above its limit or enter runner state.
 
 Exit: concurrent or hostile filesystem entries cannot redirect session control.
 
-### Step 2A: process-survival spike
+### Step 2A: process survival — implemented
 
 - Add the spike-validated hidden-runner and child-helper startup sequence.
 - Create a PTY and start the default shell or an explicit command without `sh -c`.
@@ -158,7 +158,7 @@ Exit: concurrent or hostile filesystem entries cannot redirect session control.
 
 Exit: killing the launcher leaves the single-threaded runner, PTY, child PID, cwd, and inherited synthetic environment value intact for both default-shell and explicit-command sessions.
 
-### Step 2B: stream and attach
+### Step 2B: stream and attach — implemented, signal-path hardening pending
 
 - Implement raw terminal mode with RAII restoration.
 - Forward bounded input and output records.
@@ -168,7 +168,7 @@ Exit: killing the launcher leaves the single-threaded runner, PTY, child PID, cw
 
 Exit: repeated attach and disconnect reaches the same shell without blocking it.
 
-### Step 3: lifecycle commands
+### Step 3: lifecycle commands — implemented, lifecycle hardening pending
 
 - Implement `sessions`, `sessions --json`, completed output/status reporting, and `stop`.
 - Persist the raw tail only after observed process completion and mark truncation in metadata.
@@ -208,3 +208,12 @@ Track from each release build:
 - completed-output file size and lazy-retention cleanup.
 
 The current artifact checks remain under `tests/acceptance/`.
+
+Initial lifecycle implementation measurement (Rust 1.85.0, stripped release profile):
+
+```text
+AArch64 musl   664,360 bytes; 346,177 bytes gzip -9
+x86-64 musl    756,552 bytes; 365,283 bytes gzip -9
+```
+
+Direct Linux dependencies are `rustix`, `signal-hook`, `serde`, and `serde_json`; Cargo Deny verifies their transitive licenses, advisories, sources, and duplicate-version policy.

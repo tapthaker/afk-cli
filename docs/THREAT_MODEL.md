@@ -1,6 +1,6 @@
 # AFK CLI Threat Model
 
-**Status:** Draft
+**Status:** Implemented controls under validation
 
 This document covers the small initial AFK CLI design: a persistent user-owned PTY runner, short-lived SSH attachment processes, and owner-only local Unix sockets.
 

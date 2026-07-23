@@ -2,7 +2,7 @@
 
 Acceptance tests prove AFK's narrow promise: the same remote shell remains alive across SSH attachment loss and can be reached again.
 
-The current package implements CLI-001 and CLI-002 plus the release-artifact dependency checker. Product tests are added with the implementation slice that makes each criterion meaningful; skipped placeholders are not accepted.
+The current package implements the initial Linux session lifecycle, bounded raw replay, completed-output retention, and the release-artifact dependency checker. Unit and Linux integration tests cover the implemented slices; the remaining catalog entries are hardening gates rather than skipped placeholders.
 
 ## Harness rules
 

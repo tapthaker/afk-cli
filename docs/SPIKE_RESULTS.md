@@ -92,7 +92,7 @@ tasks_after=1
 
 ### Decision
 
-Use `rustix` for Linux PTY/process/poll operations and `signal-hook` for pollable signal wakeups. This needs no signal thread and no project-owned unsafe code.
+Use `rustix` for Linux PTY/process/poll operations and `signal-hook` for signal registration. The production attachment uses atomic signal flags with poll interruption and a bounded timeout; this needs no signal thread and no project-owned unsafe code.
 
 ## 3. Resize behavior
 

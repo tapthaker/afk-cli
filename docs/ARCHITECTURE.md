@@ -1,6 +1,6 @@
 # AFK CLI Architecture
 
-**Status:** Draft
+**Status:** Initial implementation complete; hardening in progress
 
 **Repository:** `afk-cli`
 

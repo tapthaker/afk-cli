@@ -78,7 +78,7 @@ fn cli_002_invalid_arguments_are_bounded_and_redacted() -> Result<(), Box<dyn Er
 }
 
 #[test]
-fn help_describes_only_available_behavior() -> Result<(), Box<dyn Error>> {
+fn help_describes_session_commands() -> Result<(), Box<dyn Error>> {
     let home = TestHome::new()?;
     let output = run_afk(&home, &["--help"])?;
 
@@ -94,8 +94,8 @@ fn help_describes_only_available_behavior() -> Result<(), Box<dyn Error>> {
     assert!(
         output
             .stdout
-            .windows(b"not implemented".len())
-            .any(|part| part == b"not implemented")
+            .windows(b"afk stream SESSION_ID".len())
+            .any(|part| part == b"afk stream SESSION_ID")
     );
     Ok(())
 }

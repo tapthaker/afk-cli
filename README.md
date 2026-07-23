@@ -17,22 +17,15 @@ ssh -t host.example afk attach "$SESSION_ID"
 
 ## Project status
 
-AFK CLI is in early implementation after architecture and security review. It is not ready for production use yet.
+AFK CLI is an early Linux-first implementation undergoing security and lifecycle hardening. It is not ready for production use yet.
 
-The repository produces a self-contained executable named **`afk`**. It will not require a hosted service, open a network port, or run a machine-wide daemon. Once session lifecycle is implemented, one user-owned runner process will exist for each persistent terminal session.
+The repository produces a self-contained executable named **`afk`**. It does not require a hosted service, open a network port, or run a machine-wide daemon. One user-owned runner process exists for each persistent terminal session.
 
 AFK CLI works through ordinary SSH PTY channels and does not depend on a particular SSH client or private integration.
 
-The initial Rust executable currently provides side-effect-free help and version paths:
+The Rust executable implements the session lifecycle on Linux and preserves side-effect-free help and version paths.
 
-```bash
-afk --help
-afk --version
-```
-
-Session lifecycle is not implemented yet.
-
-## Planned commands
+## Commands
 
 ```bash
 afk stream SESSION_ID [-- COMMAND [ARG...]]
