@@ -9,9 +9,10 @@ SSH connection -> afk attachment -> persistent session runner -> PTY -> shell
 When SSH drops, the attachment ends but the runner and shell continue. Reconnect over SSH and attach to the same session.
 
 ```bash
-ssh -t host.example afk stream
+SESSION_ID=0123456789abcdef0123456789abcdef
+ssh -t host.example afk stream "$SESSION_ID"
 # Connection is interrupted.
-ssh -t host.example afk attach <session-id>
+ssh -t host.example afk attach "$SESSION_ID"
 ```
 
 ## Project status
@@ -34,7 +35,7 @@ Session lifecycle is not implemented yet.
 ## Planned commands
 
 ```bash
-afk stream [--id SESSION_ID] [--detach]
+afk stream SESSION_ID
 afk attach SESSION_ID
 afk sessions [--json]
 afk stop SESSION_ID

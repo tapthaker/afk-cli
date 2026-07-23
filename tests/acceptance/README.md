@@ -22,8 +22,9 @@ The current package implements CLI-001 and CLI-002 plus the release-artifact dep
 | --- | --- | --- |
 | CLI-001 | `afk --version` succeeds without creating runtime files. | Step 0 |
 | CLI-002 | Invalid arguments return exit code 2 and bounded stderr without echoing the argument. | Step 0 |
-| CLI-003 | `stream`, `attach`, `sessions`, and `stop` reject malformed or missing session IDs. | Step 1A/3 |
-| CLI-004 | A failed `attach` never creates a shell or runtime entry. | Step 2B |
+| CLI-003 | `stream` requires exactly one valid session ID and rejects `--detach`. | Step 1A/2A |
+| CLI-004 | `attach` and `stop` reject malformed or missing session IDs. | Step 1A/3 |
+| CLI-005 | A failed `attach` never creates a shell or runtime entry. | Step 2B |
 
 ### Local IPC and runtime files
 

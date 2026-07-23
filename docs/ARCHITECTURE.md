@@ -50,7 +50,7 @@ The initial promise is process continuity, not perfect reconstruction of termina
 4. Output produced while detached is discarded rather than stored without bound.
 5. Runtime sockets and metadata are accessible only to the owning Unix user.
 6. Internal IPC records, buffers, names, paths, and terminal dimensions are bounded.
-7. Session identifiers are random and validated before use in a path.
+7. Session identifiers are caller-supplied and strictly validated before use in a path.
 8. `attach` never creates a replacement shell.
 9. `stop` is explicit and distinct from disconnecting.
 10. Terminal bytes, input, environment values, and credentials are never logged.
@@ -64,7 +64,7 @@ The initial command surface is:
 ```text
 afk --help
 afk --version
-afk stream [--id SESSION_ID] [--detach]
+afk stream SESSION_ID
 afk attach SESSION_ID
 afk sessions [--json]
 afk stop SESSION_ID
@@ -72,15 +72,13 @@ afk stop SESSION_ID
 
 ### `afk stream`
 
-`stream` creates a runner and starts the account's login shell in a PTY.
+`stream` requires a session ID, creates a runner, starts the account's login shell in a PTY, and attaches immediately.
 
-- With no `--id`, AFK generates a random 128-bit session ID.
-- `--id` accepts exactly 32 lowercase hexadecimal characters.
-- A caller-generated ID allows a safe retry after an uncertain SSH disconnect.
+- The ID must contain exactly 32 lowercase hexadecimal characters.
+- The caller chooses the ID before starting the SSH command.
+- A caller-known ID allows a safe retry after an uncertain SSH disconnect.
 - If the same ID already has a live runner, `stream` attaches to it instead of creating another shell.
-- AFK prints the session ID before entering terminal forwarding.
-- `--detach` prints the ID and exits after the runner reports readiness.
-- No arbitrary command or working-directory option is included initially.
+- No detached creation, arbitrary command, or working-directory option is included initially.
 
 ### `afk attach`
 
@@ -299,7 +297,6 @@ No async runtime is planned initially. The runner is single-threaded so PTY, att
 
 Prefer the standard library. Expected small dependencies are introduced only with the feature that needs them:
 
-- `getrandom` for session IDs;
 - `rustix` for reviewed Unix and PTY operations;
 - `lexopt` if hand-written parsing stops being clear;
 - `serde` and `serde_json` for bounded metadata and `sessions --json`.
@@ -326,7 +323,7 @@ These are measured budgets, not reasons to weaken correctness.
 ### Unit tests
 
 - CLI parsing and bounded diagnostics;
-- session-ID generation, parsing, and formatting;
+- session-ID parsing and formatting;
 - every IPC record round trip;
 - truncated, oversized, and unknown IPC records;
 - runtime path and metadata validation;
@@ -387,7 +384,7 @@ The concrete criteria are maintained in the [acceptance test catalog](../tests/a
 
 ### Step 3: lifecycle and hardening
 
-- `sessions`, `--json`, `--detach`, and `stop`;
+- `sessions`, `--json`, and `stop`;
 - resize, slow-client handling, stale cleanup, and signal tests;
 - OpenSSH abrupt-disconnect tests.
 

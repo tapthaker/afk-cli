@@ -70,7 +70,6 @@ Use the standard library where it remains clear. Expected dependencies are:
 
 | Need | Candidate | Rule |
 | --- | --- | --- |
-| OS randomness | `getrandom` | Session IDs only. |
 | Unix and PTY operations | `rustix` | Enable only required features. |
 | CLI parsing | `lexopt` | Add only if the current parser becomes unclear. |
 | Metadata JSON | `serde`, `serde_json` | Cap file size before parsing; never serialize terminal data. |
@@ -83,12 +82,12 @@ Keep unwinding enabled so terminal-mode guards can restore the invoking terminal
 
 ## 3. Process startup
 
-1. `afk stream` chooses or validates a 128-bit session ID.
+1. `afk stream` validates its required 128-bit session ID.
 2. The launcher creates a private startup socket pair.
 3. It starts the current executable in hidden runner mode with that descriptor and detached standard streams.
 4. The runner calls checked session/process setup, creates owner-only runtime files, binds its Unix socket, creates a PTY, and starts the login shell.
 5. The runner reports `Ready` or a typed error.
-6. The launcher either exits for `--detach` or becomes an attachment.
+6. The launcher becomes an attachment after the runner reports readiness.
 
 The survival test must establish the exact `setsid`, controlling-terminal, process-group, and descriptor sequence. Do not rely on `nohup` behavior.
 
@@ -121,7 +120,7 @@ No terminal state is reconstructed. Reattach begins with output produced after t
 ### Step 1A: limits, identity, and IPC
 
 - Add constants for record, queue, metadata, dimensions, and path bounds.
-- Add `SessionId([u8; 16])` generation, lowercase hexadecimal display, and strict parsing.
+- Add `SessionId([u8; 16])` lowercase hexadecimal display and strict parsing.
 - Add the five-byte IPC header and record-kind validation.
 - Add round-trip, every-truncation, oversized-length, unknown-kind, and trailing-data tests.
 
@@ -159,7 +158,7 @@ Exit: repeated attach and disconnect reaches the same shell without blocking it.
 
 ### Step 3: lifecycle commands
 
-- Implement `sessions`, `sessions --json`, `stream --detach`, and `stop`.
+- Implement `sessions`, `sessions --json`, and `stop`.
 - Add verified process-group signaling and bounded TERM/KILL escalation.
 - Add slow-client, shell-exit, stale-cleanup, PID-reuse, and signal tests.
 

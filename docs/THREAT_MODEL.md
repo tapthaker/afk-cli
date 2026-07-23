@@ -59,7 +59,7 @@ Controls:
 - owner-only socket and lock;
 - ownership verification;
 - peer credential checks where supported;
-- random 128-bit session IDs;
+- strictly validated 128-bit session IDs;
 - no public listener.
 
 ### Runtime path replacement
