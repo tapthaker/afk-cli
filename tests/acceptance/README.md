@@ -89,6 +89,10 @@ AFK replays a bounded raw byte tail but does not reconstruct screen state. Tests
 | ART-005 | Compressed artifacts remain below 15 MiB. | Step 0 onward |
 | ART-006 | Clean target environments execute each artifact without installed runtime libraries. | Step 4 |
 | ART-007 | Dependency advisories, licenses, bans, and sources pass policy. | Step 0 onward |
+| ART-008 | Direct Intel and Apple Silicon macOS binaries have the expected Mach-O architecture. | Step 4 |
+| ART-009 | GitHub Release assets are four direct binaries rather than zip or tar wrappers. | Step 4 |
+| ART-010 | Every released binary is covered by `SHA256SUMS` and a build-provenance attestation. | Step 4 |
+| ART-011 | The tagged source release includes a direct SPDX JSON SBOM without creating a workflow zip artifact. | Step 4 |
 
 For Linux musl, static means no dynamic loader and no dynamically loaded system or third-party libraries. A Cargo dependency tree does not prove what the linker placed in the executable.
 

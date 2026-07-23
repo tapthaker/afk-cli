@@ -229,6 +229,8 @@ Controls before release:
 - public CI builds;
 - SBOM and license inventory;
 - `PT_INTERP` and `DT_NEEDED` inspection for musl artifacts;
+- Mach-O architecture inspection for macOS artifacts;
+- direct binary release assets with checksums and build-provenance attestations;
 - clean-image execution tests;
 - atomic installation.
 

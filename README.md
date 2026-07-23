@@ -36,11 +36,16 @@ afk stop SESSION_ID
 
 With no command, `stream` starts the account's default interactive shell. A command after `--` is executed directly as argv without an intermediate shell. Each live `attach` first replays up to the last 256 KiB of raw terminal output. For 24 hours after observed process completion, a later `attach` can print that retained output and report the exit status.
 
+## Releases
+
+Version tags publish direct, uncompressed binaries for x86-64 and AArch64 Linux musl plus Intel and Apple Silicon macOS. The session lifecycle remains Linux-only; current macOS binaries expose help and version information. Release binaries include checksums and GitHub build-provenance attestations.
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
 - [Linux runtime spike results](docs/SPIKE_RESULTS.md)
+- [Release process and artifacts](docs/RELEASE.md)
 - [Acceptance tests](tests/acceptance/README.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Contributing](CONTRIBUTING.md)

@@ -1,0 +1,251 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to release, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  validate:
+    name: Validate release tag and source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Verify tag matches Cargo package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version=$(python3 - <<'PY'
+          import tomllib
+          with open("Cargo.toml", "rb") as file:
+              print(tomllib.load(file)["package"]["version"])
+          PY
+          )
+          expected_tag="v${package_version}"
+          if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
+            echo "release tag $RELEASE_TAG does not match package version $expected_tag" >&2
+            exit 1
+          fi
+          git rev-parse --verify "refs/tags/$RELEASE_TAG"
+          test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$(git rev-parse HEAD)"
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint all targets
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run Rust tests
+        run: cargo test --workspace --all-targets
+
+      - name: Run acceptance-tooling tests
+        run: python3 -m unittest discover -s tests/acceptance -p 'test_*.py'
+
+      - name: Check advisories, licenses, bans, and sources
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          command: check
+
+  create-release:
+    name: Create draft release
+    permissions:
+      contents: write
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Create or reuse draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            is_draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)
+            if [[ "$is_draft" != "true" ]]; then
+              echo "release $RELEASE_TAG is already published" >&2
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" \
+              --draft \
+              --verify-tag \
+              --title "AFK CLI $RELEASE_TAG" \
+              --generate-notes
+          fi
+
+  build:
+    name: Build ${{ matrix.asset }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            asset: afk-linux-x86_64-musl
+            expected_arch: x86-64
+          - os: ubuntu-24.04
+            target: aarch64-unknown-linux-musl
+            asset: afk-linux-aarch64-musl
+            expected_arch: ARM aarch64
+          - os: macos-14
+            target: x86_64-apple-darwin
+            asset: afk-macos-x86_64
+            expected_arch: x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset: afk-macos-aarch64
+            expected_arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install Rust target
+        run: rustup target add "${{ matrix.target }}"
+
+      - name: Configure macOS SDK and linker
+        if: startsWith(matrix.target, 'x86_64-apple-') || startsWith(matrix.target, 'aarch64-apple-')
+        run: |
+          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=$(xcrun --find clang)" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER=$(xcrun --find clang)" >> "$GITHUB_ENV"
+
+      - name: Build locked release binary
+        run: cargo build --release --locked --target "${{ matrix.target }}"
+
+      - name: Prepare direct binary asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/afk" "dist/${{ matrix.asset }}"
+          chmod 0755 "dist/${{ matrix.asset }}"
+
+      - name: Ad-hoc sign macOS binary
+        if: startsWith(matrix.target, 'x86_64-apple-') || startsWith(matrix.target, 'aarch64-apple-')
+        run: |
+          codesign --force --sign - --timestamp=none "dist/${{ matrix.asset }}"
+          codesign --verify --strict "dist/${{ matrix.asset }}"
+
+      - name: Verify binary architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          file "dist/${{ matrix.asset }}" | tee binary-file.txt
+          grep -F "${{ matrix.expected_arch }}" binary-file.txt
+
+      - name: Verify static Linux linkage
+        if: endsWith(matrix.target, '-unknown-linux-musl')
+        run: python3 tests/acceptance/check_static_elf.py --json "dist/${{ matrix.asset }}"
+
+      - name: Attest binary provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: dist/${{ matrix.asset }}
+
+      - name: Upload direct binary to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$RELEASE_TAG" "dist/${{ matrix.asset }}" --clobber
+
+  publish:
+    name: Verify and publish release
+    permissions:
+      contents: write
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Download direct release binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir dist
+          gh release download "$RELEASE_TAG" --dir dist --pattern 'afk-*'
+
+      - name: Verify release asset set
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(
+            afk-linux-x86_64-musl
+            afk-linux-aarch64-musl
+            afk-macos-x86_64
+            afk-macos-aarch64
+          )
+          for asset in "${expected[@]}"; do
+            test -f "dist/$asset"
+            test -s "dist/$asset"
+          done
+          asset_count=$(find dist -maxdepth 1 -type f -name 'afk-*' | wc -l)
+          test "$asset_count" -eq "${#expected[@]}"
+
+      - name: Generate SPDX SBOM without a workflow archive
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/SBOM.spdx.json
+          upload-artifact: false
+
+      - name: Generate and upload checksums and SBOM
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (
+            cd dist
+            sha256sum afk-* > SHA256SUMS
+          )
+          gh release upload "$RELEASE_TAG" dist/SHA256SUMS dist/SBOM.spdx.json --clobber
+
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest

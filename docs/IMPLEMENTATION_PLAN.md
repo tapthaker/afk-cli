@@ -177,11 +177,13 @@ Exit: repeated attach and disconnect reaches the same shell without blocking it.
 
 Exit: all intended lifecycle operations are explicit, bounded, and deterministic.
 
-### Step 4: SSH and release hardening
+### Step 4: SSH and release hardening — in progress
 
 - Add containerized OpenSSH create, abrupt TCP loss, reconnect, and stop tests.
 - Execute both musl artifacts in clean target environments.
-- Add SBOM, checksums, provenance, install, rollback, and reproducibility documentation.
+- Publish direct x86-64 and AArch64 Linux musl binaries plus Intel and Apple Silicon macOS binaries from version tags.
+- Generate release checksums and build-provenance attestations before publishing the draft.
+- Add SBOM, install, rollback, notarization, and reproducibility documentation.
 
 Exit: a public prerelease demonstrates the same shell surviving real SSH transport loss.
 
