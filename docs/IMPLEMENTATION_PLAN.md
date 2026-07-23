@@ -60,9 +60,9 @@ kind: u8
 payload_len: u32, big-endian
 ```
 
-Payloads are capped at 64 KiB before allocation. The format carries only attach, input, output, resize, stop, exit, and bounded error messages.
+Payloads are capped at 64 KiB before allocation. The only record kinds are attach, input, output, resize, and stop. Socket closure represents detach or process exit.
 
-This is not a public protocol. It carries only live terminal and lifecycle events.
+This is not a public protocol. It carries only live terminal bytes, dimensions, and stop requests.
 
 ### Minimal dependencies
 
@@ -105,6 +105,12 @@ Each event-loop cycle performs bounded work:
 When detached, PTY output is read and discarded. When the active queue reaches 1 MiB, the attachment is dropped and PTY draining continues.
 
 No terminal state is reconstructed. Reattach begins with output produced after the new connection and an applied resize.
+
+### Resize and signals
+
+The attachment receives `SIGWINCH` when `sshd` changes the outer PTY. It reads that PTY with `TIOCGWINSZ` and sends rows and columns to the runner. The runner applies them to the inner PTY with `TIOCSWINSZ`; the kernel then signals the inner foreground process group.
+
+No other interactive signal is proxied. Control characters remain input bytes, allowing the inner PTY to generate `SIGINT`, `SIGTSTP`, and `SIGQUIT`. Termination of the attachment closes only the attachment socket.
 
 ## 5. Review-sized steps
 

@@ -113,6 +113,19 @@ Controls:
 - with no attachment, output is read and discarded;
 - disconnect never stops the child.
 
+### Resize or signal reaches the wrong process
+
+Threat: an outer SSH PTY resize is lost, or attachment termination accidentally signals the persistent session process.
+
+Controls:
+
+- only the active attachment may submit dimensions;
+- the attachment reads rows and columns from its outer PTY after `SIGWINCH`;
+- the runner applies those dimensions to its verified inner PTY with `TIOCSWINSZ`;
+- the kernel, not AFK, sends `SIGWINCH` to the inner foreground process group;
+- interactive control characters are forwarded as bytes and interpreted by the inner PTY;
+- `SIGHUP`, `SIGTERM`, and other attachment termination are never forwarded to the session process.
+
 ### In-flight input during disconnect
 
 Threat: the user cannot know whether the final bytes before a network failure reached the session process.

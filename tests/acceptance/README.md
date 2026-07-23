@@ -31,7 +31,7 @@ The current package implements CLI-001 and CLI-002 plus the release-artifact dep
 
 | ID | Criterion | First step |
 | --- | --- | --- |
-| IPC-001 | Every internal record kind round-trips through the bounded codec. | Step 1A |
+| IPC-001 | `Attach`, `Input`, `Output`, `Resize`, and `Stop` round-trip through the bounded codec. | Step 1A |
 | IPC-002 | Every truncated header and payload is rejected. | Step 1A |
 | IPC-003 | Payload lengths above 64 KiB are rejected before allocation. | Step 1A |
 | IPC-004 | Unknown kinds, wrong fixed payload lengths, and invalid state transitions are rejected. | Step 1A |
@@ -50,11 +50,13 @@ The current package implements CLI-001 and CLI-002 plus the release-artifact dep
 | PROC-003 | Continuous output while detached does not block the child. | Step 2A |
 | PROC-004 | Reattach reaches the same default-shell PID and synthetic shell variable. | Step 2B |
 | PROC-005 | Reattach reaches the same PID for an explicitly supplied long-running command. | Step 2B |
-| PROC-006 | Terminal resize reaches the runner-owned PTY. | Step 2B |
-| PROC-007 | A 1 MiB full output queue drops the slow attachment while the child continues. | Step 2B |
-| PROC-008 | A new attachment replaces a stale attachment and becomes the only input owner. | Step 2B |
-| PROC-009 | `stop` terminates the intended process group and not an unrelated process. | Step 3 |
-| PROC-010 | Session-process exit removes socket, lock, and metadata. | Step 3 |
+| PROC-006 | Initial dimensions and later outer-PTY `SIGWINCH` updates reach the inner PTY. | Step 2B |
+| PROC-007 | Forwarded `Ctrl-C` is interpreted by the inner PTY and reaches its foreground process as `SIGINT`. | Step 2B |
+| PROC-008 | `SIGHUP` or `SIGTERM` ending an attachment does not signal the session process. | Step 2B |
+| PROC-009 | A 1 MiB full output queue drops the slow attachment while the child continues. | Step 2B |
+| PROC-010 | A new attachment replaces a stale attachment and becomes the only input owner. | Step 2B |
+| PROC-011 | `stop` terminates the intended process group and not an unrelated process. | Step 3 |
+| PROC-012 | Session-process exit removes socket, lock, and metadata. | Step 3 |
 
 ### OpenSSH disconnect
 
