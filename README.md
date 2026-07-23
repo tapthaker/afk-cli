@@ -41,12 +41,13 @@ afk sessions [--json]
 afk stop SESSION_ID
 ```
 
-With no command, `stream` starts the account's default interactive shell. A command after `--` is executed directly as argv without an intermediate shell.
+With no command, `stream` starts the account's default interactive shell. A command after `--` is executed directly as argv without an intermediate shell. Completed exit status is retained for 24 hours so a later `attach` can report it; terminal output is never retained.
 
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
+- [Linux runtime spike results](docs/SPIKE_RESULTS.md)
 - [Acceptance tests](tests/acceptance/README.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Contributing](CONTRIBUTING.md)

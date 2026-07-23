@@ -11,7 +11,7 @@ AFK protects:
 - continuity of the intended shell or command and its PTY;
 - terminal input and output while SSH transports it;
 - control of a session from other Unix users;
-- integrity of session metadata and lifecycle operations;
+- integrity of live and completed session metadata and lifecycle operations;
 - host memory and file descriptors from unbounded local IPC;
 - release artifact integrity.
 
@@ -139,6 +139,7 @@ Threat: a failed attach starts a new process and the user mistakes it for the or
 Controls:
 
 - create and attach are distinct operations;
+- `stream` returns `SessionExists` for live or retained completed metadata;
 - `attach` never creates;
 - an explicit `stream` action is required to start a process;
 - session ID and safe process metadata are shown to the user.
@@ -155,17 +156,19 @@ Controls:
 - no `sh -c` wraps user-provided values;
 - no IPC value is interpolated into a command string.
 
-### Process-group escape
+### Stop targets the wrong process
 
-Threat: `stop` kills an unrelated process or fails to terminate the intended session tree.
+Threat: `stop` signals an unrelated process because of stale metadata or PID reuse.
 
 Controls:
 
-- the runner creates and owns the PTY process group;
-- stop requests go through a verified runner socket;
-- signals target the runner-owned process group;
+- stop requests go through a verified live runner socket;
+- the runner tracks the child it created rather than trusting metadata;
+- the runner closes the inner PTY and signals only its verified child session leader;
 - TERM-to-KILL escalation has a fixed timeout;
-- pipelines, descendants, PID reuse, and cleanup are integration-tested.
+- unrelated-process and PID-reuse cases are integration-tested.
+
+Stop is best effort for descendants. A process that ignores terminal hangup and termination or creates a new Unix session may survive. AFK does not add `/proc` scanning or claim process isolation.
 
 ### Runner killed with SSH login
 
@@ -195,7 +198,7 @@ Controls:
 - no terminal recording;
 - no terminal bytes in diagnostics;
 - bounded static or metadata-only errors;
-- owner-only metadata;
+- owner-only metadata containing only safe lifecycle and completion fields;
 - sentinel tests verify sensitive values are not emitted;
 - IPC and PTY payload types do not derive unrestricted debug output.
 
@@ -225,9 +228,10 @@ The initial implementation defines and tests at least:
 - sessions returned by one listing: 1024;
 - stop grace period: five seconds;
 - command argv: 256 entries and 64 KiB aggregate;
-- PTY bytes processed per event-loop tick: 256 KiB.
+- PTY bytes processed per event-loop tick: 256 KiB;
+- completed metadata retention: 24 hours.
 
-There is no replay buffer, scrollback buffer, terminal snapshot, or completed-session retention in the initial design.
+There is no replay buffer, scrollback buffer, terminal snapshot, or terminal-output retention in the initial design.
 
 ## Unsafe code
 
@@ -250,7 +254,7 @@ Before the process-survival implementation is accepted:
 - malformed IPC tests cover every record kind;
 - launcher termination leaves the runner and shell alive;
 - detached high output does not block the child;
-- stop is constrained to the intended process group;
+- stop is constrained to the verified child session leader;
 - sentinel values do not appear in diagnostics or metadata;
 - dependency, advisory, and license checks pass.
 

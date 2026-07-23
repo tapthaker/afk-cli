@@ -49,7 +49,7 @@ The runner is single-threaded and nonblocking. One state owner coordinates:
 - output queue limits;
 - child exit and stop.
 
-No async runtime or mutex is needed initially.
+No async runtime or mutex is needed initially. Linux spikes confirmed one thread per AFK process using `poll`; see [SPIKE_RESULTS.md](SPIKE_RESULTS.md).
 
 ### Minimal local IPC
 
@@ -60,9 +60,9 @@ kind: u8
 payload_len: u32, big-endian
 ```
 
-Payloads are capped at 64 KiB before allocation. The only record kinds are attach, input, output, resize, and stop. Socket closure represents detach or process exit.
+Payloads are capped at 64 KiB before allocation. The record kinds are attach, input, output, resize, stop, and exit. Socket closure without an exit record represents detach.
 
-This is not a public protocol. It carries only live terminal bytes, dimensions, and stop requests.
+This is not a public protocol. It carries only live terminal bytes, dimensions, stop requests, and final process status.
 
 ### Minimal dependencies
 
@@ -71,6 +71,7 @@ Use the standard library where it remains clear. Expected dependencies are:
 | Need | Candidate | Rule |
 | --- | --- | --- |
 | Unix and PTY operations | `rustix` | Enable only required features. |
+| Pollable signal wakeups | `signal-hook` | Self-pipe only; no signal thread. |
 | CLI parsing | `lexopt` | Add only if the current parser becomes unclear. |
 | Metadata JSON | `serde`, `serde_json` | Cap file size before parsing; never serialize terminal data. |
 
@@ -78,18 +79,19 @@ Do not add Tokio, TLS, terminal emulation, a general wire serializer, or a gener
 
 ### Unsafe and panic behavior
 
-Keep unwinding enabled so terminal-mode guards can restore the invoking terminal. Unsafe Rust remains denied. If a safe PTY API is insufficient, isolate the minimum exception under `platform::linux` with documented invariants and dedicated tests.
+Keep unwinding enabled so terminal-mode guards can restore the invoking terminal. Unsafe Rust remains denied. The Linux spike confirmed a safe design: spawn fresh hidden runner and child-helper modes, perform `setsid` and controlling-terminal setup in those fresh processes, and avoid `fork`, `pre_exec`, and project-owned unsafe code.
 
 ## 3. Process startup
 
 1. `afk stream` validates its required 128-bit session ID and optional argv after `--`.
 2. The launcher creates a private startup socket pair.
 3. It starts the current executable in hidden runner mode with that descriptor and detached standard streams.
-4. The runner creates owner-only runtime files, binds its Unix socket, creates a PTY, and starts either the validated `$SHELL` default or the exact supplied argv.
-5. The runner reports `Ready` or a typed error.
-6. The launcher becomes an attachment after the runner reports readiness.
+4. The runner creates owner-only runtime files, binds its Unix socket, and safely opens a PTY master and slave.
+5. It starts a fresh hidden child-helper with the slave as standard I/O; that helper creates its terminal session and executes the validated `$SHELL` default or exact supplied argv.
+6. The runner reports `Ready` or a typed error.
+7. The launcher becomes an attachment after the runner reports readiness.
 
-The survival test must establish the exact `setsid`, controlling-terminal, process-group, and descriptor sequence. Do not rely on `nohup` behavior.
+The disposable Linux spike established this sequence on AArch64 and x86-64 musl. Production integration tests must preserve the same invariants and must not rely on `nohup` behavior.
 
 ## 4. Runner behavior
 
@@ -110,7 +112,7 @@ No terminal state is reconstructed. Reattach begins with output produced after t
 
 The attachment receives `SIGWINCH` when `sshd` changes the outer PTY. It reads that PTY with `TIOCGWINSZ` and sends rows and columns to the runner. The runner applies them to the inner PTY with `TIOCSWINSZ`; the kernel then signals the inner foreground process group.
 
-No other interactive signal is proxied. Control characters remain input bytes, allowing the inner PTY to generate `SIGINT`, `SIGTSTP`, and `SIGQUIT`. Termination of the attachment closes only the attachment socket.
+No other interactive signal is proxied. Control characters remain input bytes, allowing the inner PTY to generate `SIGINT`, `SIGTSTP`, and `SIGQUIT`. Termination of the attachment closes only the attachment socket. A `signal-hook` self-pipe wakes the same single-threaded poll loop.
 
 ## 5. Review-sized steps
 
@@ -127,7 +129,7 @@ No other interactive signal is proxied. Control characters remain input bytes, a
 
 - Add constants for record, queue, metadata, dimensions, path, and argv bounds.
 - Add `SessionId([u8; 16])` lowercase hexadecimal display and strict parsing.
-- Add the five-byte IPC header and record-kind validation.
+- Add the five-byte IPC header and validation for attach, input, output, resize, stop, and exit.
 - Add round-trip, every-truncation, oversized-length, unknown-kind, and trailing-data tests.
 
 Exit: malformed IPC cannot allocate above its limit or enter runner state.
@@ -139,18 +141,19 @@ Exit: malformed IPC cannot allocate above its limit or enter runner state.
 - Add exclusive lock, owner-only socket path, bounded metadata, and atomic replacement.
 - Reject symlinks, overlong socket paths, malformed IDs, and oversized metadata.
 - Verify stale entries through the live socket rather than PID alone.
+- Add 24-hour completed metadata tombstones and lazy expiry cleanup.
 
 Exit: concurrent or hostile filesystem entries cannot redirect session control.
 
 ### Step 2A: process-survival spike
 
-- Add checked hidden-runner startup and readiness response.
+- Add the spike-validated hidden-runner and child-helper startup sequence.
 - Create a PTY and start the default shell or an explicit command without `sh -c`.
 - Bind the owner-only Unix socket.
 - Drain PTY output with no attachment.
 - Add a test-only lifecycle observation that never exposes terminal bytes.
 
-Exit: killing the launcher leaves the runner, PTY, child PID, and cwd alive for both default-shell and explicit-command sessions.
+Exit: killing the launcher leaves the single-threaded runner, PTY, child PID, cwd, and inherited synthetic environment value intact for both default-shell and explicit-command sessions.
 
 ### Step 2B: stream and attach
 
@@ -164,8 +167,8 @@ Exit: repeated attach and disconnect reaches the same shell without blocking it.
 
 ### Step 3: lifecycle commands
 
-- Implement `sessions`, `sessions --json`, and `stop`.
-- Add verified process-group signaling and bounded TERM/KILL escalation.
+- Implement `sessions`, `sessions --json`, completed-session reporting, and `stop`.
+- Implement best-effort stop by closing the PTY and applying bounded TERM/KILL escalation to the verified child session leader; do not add `/proc` scanning.
 - Add slow-client, shell-exit, stale-cleanup, PID-reuse, and signal tests.
 
 Exit: all intended lifecycle operations are explicit, bounded, and deterministic.

@@ -71,8 +71,9 @@ afk stop SESSION_ID
 - The caller chooses the ID before starting the SSH command.
 - With no command, AFK executes `$SHELL` when it names an absolute executable file, with `/bin/sh` as fallback. AFK does not add login-shell flags.
 - A command after `--` is executed as an exact bounded argv vector without `sh -c`.
+- The process inherits the cwd and environment of `afk stream`; AFK does not persist either.
 - The command is used only when creating a session.
-- If the ID already has a live runner, `stream` attaches without starting another process.
+- If the ID already exists as a live or retained completed session, `stream` returns `SessionExists` and does not attach or start another process.
 - There is no detached creation mode.
 
 ### `afk attach`
@@ -80,19 +81,22 @@ afk stop SESSION_ID
 `attach` connects the invoking SSH terminal to an existing runner.
 
 - `attach` never creates a process.
+- For a retained completed session, `attach` prints the completion summary and returns the recorded exit status.
 - A new attachment replaces an older attachment so a stale SSH connection cannot block recovery.
 - The outer terminal enters raw mode and is restored when attachment ends.
 - Closing SSH, stdin, or the Unix socket detaches without stopping the session process.
 
 ### `afk sessions`
 
-`sessions` lists live session IDs, runner and child PIDs, start time, and attached state. `--json` emits bounded machine-readable output.
+`sessions` lists live and retained completed sessions. Live entries include runner and child PIDs, start time, and attached state. Completed entries include start time, finish time, and exit code or signal. `--json` emits bounded machine-readable output.
 
 Listings and metadata exclude argv, environment values, credentials, terminal input, and terminal output.
 
 ### `afk stop`
 
-`stop` connects to the verified runner and asks it to terminate the inner PTY process group. It never signals a PID solely because that PID appeared in metadata.
+`stop` connects to the verified runner and asks it to close the inner PTY and terminate the child session leader. It never signals a PID solely because that PID appeared in metadata.
+
+Stop is best effort for descendants. Ordinary shell jobs receive terminal hangup and exit, but a process that deliberately ignores signals or creates a new Unix session may survive.
 
 ## 4. Process model
 
@@ -157,11 +161,12 @@ Initial record kinds are limited to:
 - `Input`: terminal bytes from the outer PTY to the inner PTY;
 - `Output`: terminal bytes from the inner PTY to the outer PTY;
 - `Resize`: new rows and columns;
-- `Stop`: deliberate termination from `afk stop`.
+- `Stop`: deliberate termination from `afk stop`;
+- `Exit`: a two-byte reason (`code` or `signal`) and `u8` value.
 
-The first record on a connection must be `Attach` or `Stop`. After `Attach`, only input and resize records are accepted from the attachment; only output records are sent by the runner.
+The first record on a connection must be `Attach` or `Stop`. After `Attach`, only input and resize records are accepted from the attachment; output and one final exit record may be sent by the runner.
 
-Socket closure represents attachment loss. When the session process exits, the runner closes the attachment socket and cleans up. No acknowledgement, replay, screen-state, or structured exit protocol is included initially.
+Socket closure without an exit record represents attachment loss. No acknowledgement, replay, or screen-state protocol is included.
 
 ### Forwarding
 
@@ -209,7 +214,7 @@ No other interactive signal needs forwarding:
 
 `SIGHUP`, `SIGTERM`, or other termination received by the attachment ends only that attachment. It must not terminate the persistent session process.
 
-The runner uses process APIs internally to observe child exit. `afk stop` causes the runner to send `SIGTERM` to its verified process group, wait five seconds, and then send `SIGKILL` if necessary.
+The runner uses process APIs internally to observe child exit. `afk stop` closes the inner PTY, sends `SIGTERM` to the verified child session leader, waits five seconds, and sends `SIGKILL` if that process remains. It does not scan unrelated processes through `/proc`.
 
 ## 7. Runtime files
 
@@ -244,14 +249,22 @@ The home-relative root does not depend on `$XDG_RUNTIME_DIR`, which may disappea
 
 ## 8. Lifecycle
 
-A session ends when:
+A session completes when:
 
 - its shell or command exits;
 - the user runs `afk stop`;
 - the host or administrator kills it;
 - the runner or inner PTY fails unrecoverably.
 
-There is no detached-session timeout. After process exit, the runner removes its socket, lock, and metadata and exits. Completed sessions are not retained.
+There is no detached-session timeout. After process exit, the runner:
+
+1. records the exit code or signal and finish time atomically;
+2. sends an exit record to an active attachment;
+3. removes its socket and lock;
+4. retains the bounded metadata tombstone for 24 hours;
+5. exits.
+
+Any later AFK command lazily removes expired tombstones. AFK never retains terminal input or output. An attached command returns the child exit code; a signal exit returns the conventional `128 + signal` status.
 
 Disconnect, replacement attachment, process exit, and stop are separate tested transitions.
 
@@ -268,6 +281,7 @@ sessions returned per list    1024
 PTY bytes processed per tick  256 KiB
 stop grace period              5 seconds
 command arguments              256 entries / 64 KiB aggregate
+completed metadata retention   24 hours
 ```
 
 Security requirements:
@@ -277,7 +291,7 @@ Security requirements:
 - peer credentials are checked where supported;
 - record lengths are checked before allocation;
 - process startup uses argv and never `sh -c` for supplied values;
-- stop signals only the runner-owned process group;
+- stop signals only the verified child session leader and documents best-effort descendant cleanup;
 - terminal and IPC payloads are never logged or persisted;
 - unsafe Rust is denied except for a narrowly reviewed platform operation when no safe API exists.
 
@@ -285,7 +299,7 @@ AFK does not isolate mutually untrusted people sharing one Unix UID. Detailed co
 
 ## 10. Implementation and acceptance
 
-Rust module boundaries, dependencies, and delivery steps are maintained in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+Rust module boundaries, dependencies, and delivery steps are maintained in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). Linux PTY, signal, thread, stop, and socket-path experiments are recorded in [SPIKE_RESULTS.md](SPIKE_RESULTS.md).
 
 Concrete disconnect, malformed-input, process, SSH, and static-artifact criteria are maintained in the [acceptance test catalog](../tests/acceptance/README.md).
 

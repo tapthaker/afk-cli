@@ -26,12 +26,14 @@ The current package implements CLI-001 and CLI-002 plus the release-artifact dep
 | CLI-004 | Explicit command arguments, including shell metacharacters, are passed literally without `sh -c`. | Step 2A |
 | CLI-005 | `attach` and `stop` reject malformed or missing session IDs. | Step 1A/3 |
 | CLI-006 | A failed `attach` never creates a process or runtime entry. | Step 2B |
+| CLI-007 | `stream` returns `SessionExists` for a live or retained completed ID. | Step 2A/3 |
+| CLI-008 | Attaching to completed metadata prints only the completion summary and returns the recorded status. | Step 3 |
 
 ### Local IPC and runtime files
 
 | ID | Criterion | First step |
 | --- | --- | --- |
-| IPC-001 | `Attach`, `Input`, `Output`, `Resize`, and `Stop` round-trip through the bounded codec. | Step 1A |
+| IPC-001 | `Attach`, `Input`, `Output`, `Resize`, `Stop`, and `Exit` round-trip through the bounded codec. | Step 1A |
 | IPC-002 | Every truncated header and payload is rejected. | Step 1A |
 | IPC-003 | Payload lengths above 64 KiB are rejected before allocation. | Step 1A |
 | IPC-004 | Unknown kinds, wrong fixed payload lengths, and invalid state transitions are rejected. | Step 1A |
@@ -40,23 +42,25 @@ The current package implements CLI-001 and CLI-002 plus the release-artifact dep
 | FS-003 | Concurrent create requests for one ID produce one runner. | Step 1B/2A |
 | FS-004 | A stale PID cannot authorize cleanup or signaling. | Step 1B/3 |
 | FS-005 | Metadata stays within its limit and excludes terminal, argument, and environment contents. | Step 1B/3 |
+| FS-006 | Completed metadata records finish time and exit code or signal, then expires lazily after 24 hours. | Step 1B/3 |
 
 ### Process continuity
 
 | ID | Criterion | First step |
 | --- | --- | --- |
-| PROC-001 | Launcher exit leaves the runner, PTY, and default shell or explicit command alive. | Step 2A |
+| PROC-001 | Launcher exit leaves the single-threaded runner, PTY, and default shell or explicit command alive. | Step 2A |
 | PROC-002 | Closing an attachment does not change the shell PID or cwd. | Step 2B |
 | PROC-003 | Continuous output while detached does not block the child. | Step 2A |
 | PROC-004 | Reattach reaches the same default-shell PID and synthetic shell variable. | Step 2B |
-| PROC-005 | Reattach reaches the same PID for an explicitly supplied long-running command. | Step 2B |
+| PROC-005 | Reattach reaches the same PID, cwd, and inherited synthetic environment value for an explicitly supplied long-running command. | Step 2B |
 | PROC-006 | Initial dimensions and later outer-PTY `SIGWINCH` updates reach the inner PTY. | Step 2B |
 | PROC-007 | Forwarded `Ctrl-C` is interpreted by the inner PTY and reaches its foreground process as `SIGINT`. | Step 2B |
 | PROC-008 | `SIGHUP` or `SIGTERM` ending an attachment does not signal the session process. | Step 2B |
 | PROC-009 | A 1 MiB full output queue drops the slow attachment while the child continues. | Step 2B |
 | PROC-010 | A new attachment replaces a stale attachment and becomes the only input owner. | Step 2B |
-| PROC-011 | `stop` terminates the intended process group and not an unrelated process. | Step 3 |
-| PROC-012 | Session-process exit removes socket, lock, and metadata. | Step 3 |
+| PROC-011 | `stop` closes the PTY and terminates the verified child session leader without signaling an unrelated process. | Step 3 |
+| PROC-012 | A signal-ignoring or `setsid` descendant is outside the best-effort stop guarantee and is cleaned up by the fixture. | Step 3 |
+| PROC-013 | Process exit sends one `Exit` record, persists completion metadata, and removes the socket and lock. | Step 3 |
 
 ### OpenSSH disconnect
 
