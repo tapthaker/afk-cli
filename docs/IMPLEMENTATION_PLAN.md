@@ -104,9 +104,9 @@ Each event-loop cycle performs bounded work:
 5. flush the bounded output queue;
 6. block only when no immediate work remains.
 
-Every PTY output byte enters a 1 MiB in-memory tail ring. When detached, output is drained into that ring without being sent. When the active queue reaches 1 MiB, the attachment is dropped and PTY draining continues.
+Every PTY output byte enters a 256 KiB in-memory tail ring. When detached, output is drained into that ring without being sent. On attach, a tail snapshot is placed in the 1 MiB attachment queue before new PTY output. When that queue reaches its limit, the attachment is dropped and PTY draining continues.
 
-No terminal state is reconstructed. Live reattach begins with output produced after the new connection and an applied resize. After observed process completion, the runner atomically persists the bounded tail for completed-session retrieval.
+No terminal state is reconstructed. Live reattach receives the raw tail followed by new output in order; without an acknowledgement cursor, some previously seen bytes may be replayed. After observed process completion, the runner atomically persists the bounded tail for completed-session retrieval.
 
 ### Resize and signals
 
@@ -142,7 +142,7 @@ Exit: malformed IPC cannot allocate above its limit or enter runner state.
 - Reject symlinks, overlong socket paths, malformed IDs, and oversized metadata.
 - Verify stale entries through the live socket rather than PID alone.
 - Add 24-hour completed metadata and output tombstones with lazy expiry cleanup.
-- Validate owner-only output files before reading and cap them at 1 MiB.
+- Validate owner-only output files before reading and cap them at 256 KiB.
 
 Exit: concurrent or hostile filesystem entries cannot redirect session control.
 
@@ -151,7 +151,9 @@ Exit: concurrent or hostile filesystem entries cannot redirect session control.
 - Add the spike-validated hidden-runner and child-helper startup sequence.
 - Create a PTY and start the default shell or an explicit command without `sh -c`.
 - Bind the owner-only Unix socket.
-- Drain PTY output into a byte-bounded tail ring with no attachment.
+- Drain PTY output into a 256 KiB byte ring with or without an attachment.
+- Snapshot and enqueue the raw tail before new output on each attachment.
+- Emit a static marker when the replay has been truncated.
 - Add a test-only lifecycle observation that never exposes terminal bytes.
 
 Exit: killing the launcher leaves the single-threaded runner, PTY, child PID, cwd, and inherited synthetic environment value intact for both default-shell and explicit-command sessions.

@@ -29,7 +29,7 @@ When SSH disconnects, the attach process ends. The runner keeps the inner PTY an
 
 AFK does not implement SSH. SSH carries ordinary terminal stdin, stdout, and resize events to the remote `afk` attachment.
 
-The initial promise is process continuity. Live reattachment does not reconstruct missed screen state, but AFK retains a bounded output tail so a completed session can show its final output.
+The initial promise is process continuity with bounded raw history. Each live attachment receives the retained output tail before new PTY output; AFK does not reconstruct terminal screen state.
 
 ## 2. Scope
 
@@ -48,8 +48,8 @@ AFK does not provide:
 - a hosted service or account;
 - a machine-wide daemon;
 - a public wire protocol;
-- terminal emulation or live replay;
-- windows, panes, or scrollback;
+- terminal emulation or screen-state reconstruction;
+- windows, panes, or rendered scrollback;
 - survival across host reboot.
 
 ## 3. Commands
@@ -81,6 +81,7 @@ afk stop SESSION_ID
 `attach` connects the invoking SSH terminal to an existing runner.
 
 - `attach` never creates a process.
+- For a live session, `attach` first receives the retained raw output tail and then continues with new PTY output.
 - For a retained completed session, `attach` prints the retained raw output tail, a truncation marker when needed, and the completion summary, then returns the recorded exit status.
 - A new attachment replaces an older attachment so a stale SSH connection cannot block recovery.
 - The outer terminal enters raw mode and is restored when attachment ends.
@@ -166,19 +167,22 @@ Initial record kinds are limited to:
 
 The first record on a connection must be `Attach` or `Stop`. After `Attach`, only input and resize records are accepted from the attachment; output and one final exit record may be sent by the runner.
 
-Socket closure without an exit record represents attachment loss. No acknowledgement, replay, or screen-state protocol is included.
+Socket closure without an exit record represents attachment loss. No acknowledgement, replay-cursor, or screen-state protocol is included.
 
 ### Forwarding
 
 The runner uses one nonblocking event loop for the inner PTY, listener, and active attachment.
 
 - PTY reads never wait for an attachment write.
-- Every PTY output byte is added to a 1 MiB in-memory tail ring.
+- Every PTY output byte is added to a 256 KiB in-memory tail ring.
 - With no attachment, output is still drained into that bounded ring.
-- A separate bounded queue holds output waiting for the active attachment.
+- On attach, the runner snapshots the tail into the attachment queue before reading more PTY output, preserving replay-before-live ordering.
+- A separate bounded queue holds replay and new output waiting for the active attachment.
 - If that queue fills, the attachment is closed and the runner continues draining output.
 - Accepting a new `Attach` closes the previous attachment socket.
 - Input in flight during a disconnect has the same uncertainty as ordinary SSH and is never automatically resent.
+
+If the ring has wrapped, AFK sends a static truncation marker before the raw tail. Because there is no output acknowledgement or replay cursor, a new attachment may see bytes that its previous terminal had already received. The tail is raw PTY output, not terminal rows or reconstructed screen state.
 
 ## 6. Resize and signal handling
 
@@ -245,7 +249,7 @@ Requirements:
 - atomic metadata replacement;
 - Unix socket path-length validation;
 - bounded metadata read before JSON parsing;
-- completed output mode 0600 and size at most 1 MiB;
+- completed output mode 0600 and size at most 256 KiB;
 - atomic completed-output replacement;
 - stale cleanup verified through the live socket, not PID alone.
 
@@ -263,7 +267,7 @@ A session completes when:
 There is no detached-session timeout. After process exit, the runner:
 
 1. drains remaining PTY output into the tail ring;
-2. atomically writes the last 1 MiB of raw PTY output to the owner-only output file;
+2. atomically writes the last 256 KiB of raw PTY output to the owner-only output file;
 3. records the exit code or signal, finish time, retained byte count, and truncation flag atomically;
 4. sends an exit record to an active attachment;
 5. removes its socket and lock;
@@ -281,8 +285,8 @@ Initial fixed bounds are:
 ```text
 IPC payload                  64 KiB
 attachment output queue       1 MiB
-in-memory output tail          1 MiB
-completed output file          1 MiB
+in-memory output tail        256 KiB
+completed output file        256 KiB
 metadata file                64 KiB
 terminal rows/columns         1..=4096
 sessions returned per list    1024

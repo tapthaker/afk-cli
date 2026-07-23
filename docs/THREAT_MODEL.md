@@ -16,7 +16,7 @@ AFK protects:
 - host memory and file descriptors from unbounded local IPC;
 - release artifact integrity.
 
-AFK keeps a 1 MiB output tail in memory and writes it to an owner-only file after observed process completion. It does not persist a separate input stream, though terminal echo can place input in output. Shell history and files created by applications remain governed by those applications.
+AFK keeps a 256 KiB output tail in memory, replays it on live attach, and writes it to an owner-only file after observed process completion. It does not persist a separate input stream, though terminal echo can place input in output. Shell history and files created by applications remain governed by those applications.
 
 ## Trust boundaries
 
@@ -111,7 +111,7 @@ Controls:
 - PTY reads remain enabled independently of attachment writes;
 - per-attachment output queue is byte-bounded;
 - a full queue disconnects the attachment;
-- with no attachment, output is read into a 1 MiB tail ring;
+- with no attachment, output is read into a 256 KiB tail ring;
 - disconnect never stops the child.
 
 ### Resize or signal reaches the wrong process
@@ -189,7 +189,7 @@ Threat: terminal output contains commands, echoed input, tokens, or application 
 
 Controls:
 
-- retain only the last 1 MiB;
+- retain only the last 256 KiB;
 - keep the tail in memory while the process runs;
 - write it only after observed process completion;
 - create the completed-output file with mode 0600 under the owner-only runtime root;
@@ -201,9 +201,9 @@ A user or process already running under the same Unix UID is outside AFK's isola
 
 ### Terminal escape sequences
 
-Threat: retained child output contains escape sequences that execute terminal behaviors when printed by a later `attach`.
+Threat: retained child output contains escape sequences that execute terminal behaviors when replayed by a live or completed `attach`.
 
-Control: AFK treats retained output as opaque bytes and prints it only after an explicit attach to that completed session. The user's terminal emulator already processes untrusted remote output during ordinary SSH. AFK does not add a terminal parser or sanitizer.
+Control: AFK treats retained output as opaque bytes and prints it only after an explicit attach to that session. The user's terminal emulator already processes untrusted remote output during ordinary SSH. AFK does not add a terminal parser or sanitizer.
 
 ### Sensitive diagnostics
 
@@ -238,8 +238,8 @@ The initial implementation defines and tests at least:
 
 - IPC payload: 64 KiB;
 - attachment output queue: 1 MiB;
-- in-memory output tail: 1 MiB;
-- completed-output file: 1 MiB;
+- in-memory output tail: 256 KiB;
+- completed-output file: 256 KiB;
 - session ID: 16 bytes encoded as 32 lowercase hexadecimal characters;
 - metadata file: 64 KiB;
 - terminal rows and columns: 1 through 4096;
@@ -250,7 +250,7 @@ The initial implementation defines and tests at least:
 - PTY bytes processed per event-loop tick: 256 KiB;
 - completed metadata retention: 24 hours.
 
-There is no live replay, scrollback model, terminal snapshot, or separate input retention in the initial design.
+There is no replay cursor, scrollback model, terminal snapshot, or separate input retention in the initial design. Live replay is a raw byte tail and may duplicate bytes that the previous attachment received.
 
 ## Unsafe code
 

@@ -43,7 +43,7 @@ The current package implements CLI-001 and CLI-002 plus the release-artifact dep
 | FS-004 | A stale PID cannot authorize cleanup or signaling. | Step 1B/3 |
 | FS-005 | Metadata stays within its limit and excludes terminal, argument, and environment contents. | Step 1B/3 |
 | FS-006 | Completed metadata records finish time, exit code or signal, retained byte count, and truncation without containing terminal bytes. | Step 1B/3 |
-| FS-007 | Completed output is mode 0600, at most 1 MiB, and expires lazily with metadata after 24 hours. | Step 1B/3 |
+| FS-007 | Completed output is mode 0600, at most 256 KiB, and expires lazily with metadata after 24 hours. | Step 1B/3 |
 
 ### Process continuity
 
@@ -51,7 +51,7 @@ The current package implements CLI-001 and CLI-002 plus the release-artifact dep
 | --- | --- | --- |
 | PROC-001 | Launcher exit leaves the single-threaded runner, PTY, and default shell or explicit command alive. | Step 2A |
 | PROC-002 | Closing an attachment does not change the shell PID or cwd. | Step 2B |
-| PROC-003 | Continuous output while detached does not block the child and the in-memory tail never exceeds 1 MiB. | Step 2A |
+| PROC-003 | Continuous output while detached does not block the child and the in-memory tail never exceeds 256 KiB. | Step 2A |
 | PROC-004 | Reattach reaches the same default-shell PID and synthetic shell variable. | Step 2B |
 | PROC-005 | Reattach reaches the same PID, cwd, and inherited synthetic environment value for an explicitly supplied long-running command. | Step 2B |
 | PROC-006 | Initial dimensions and later outer-PTY `SIGWINCH` updates reach the inner PTY. | Step 2B |
@@ -61,9 +61,10 @@ The current package implements CLI-001 and CLI-002 plus the release-artifact dep
 | PROC-010 | A new attachment replaces a stale attachment and becomes the only input owner. | Step 2B |
 | PROC-011 | `stop` closes the PTY and terminates the verified child session leader without signaling an unrelated process. | Step 3 |
 | PROC-012 | A signal-ignoring or `setsid` descendant is outside the best-effort stop guarantee and is cleaned up by the fixture. | Step 3 |
-| PROC-013 | Process exit sends one `Exit` record, atomically persists the last 1 MiB of raw output and completion metadata, and removes the socket and lock. | Step 3 |
-| PROC-014 | Output above 1 MiB retains the final bytes exactly and records that earlier output was truncated. | Step 3 |
-| PROC-015 | Live reattach starts with new output and does not replay the retained tail. | Step 2B |
+| PROC-013 | Process exit sends one `Exit` record, atomically persists the last 256 KiB of raw output and completion metadata, and removes the socket and lock. | Step 3 |
+| PROC-014 | Output above 256 KiB retains the final bytes exactly and records that earlier output was truncated. | Step 3 |
+| PROC-015 | Every live attach receives the current raw tail before subsequently read PTY output. | Step 2B |
+| PROC-016 | A wrapped tail emits a truncation marker, and repeated attach may replay previously delivered bytes without introducing gaps in runner read order. | Step 2B |
 
 ### OpenSSH disconnect
 
@@ -75,7 +76,7 @@ The current package implements CLI-001 and CLI-002 plus the release-artifact dep
 | SSH-004 | Detached high output does not freeze the shell before reconnect. | Step 4 |
 | SSH-005 | `stop` over a later SSH connection terminates the session and cleans runtime files. | Step 4 |
 
-AFK does not replay missed output into a live session or reconstruct screen state. The bounded raw tail is printed only after completion. Tests must not expect output acknowledgements or exactly-once input delivery.
+AFK replays a bounded raw byte tail but does not reconstruct screen state. Tests must allow replay of previously delivered output and must not expect output acknowledgements or exactly-once input delivery.
 
 ### Release artifacts
 

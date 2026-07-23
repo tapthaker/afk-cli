@@ -41,7 +41,7 @@ afk sessions [--json]
 afk stop SESSION_ID
 ```
 
-With no command, `stream` starts the account's default interactive shell. A command after `--` is executed directly as argv without an intermediate shell. For 24 hours after observed process completion, a later `attach` can print the last 1 MiB of raw terminal output and report the exit status.
+With no command, `stream` starts the account's default interactive shell. A command after `--` is executed directly as argv without an intermediate shell. Each live `attach` first replays up to the last 256 KiB of raw terminal output. For 24 hours after observed process completion, a later `attach` can print that retained output and report the exit status.
 
 ## Documentation
 
@@ -57,9 +57,9 @@ With no command, `stream` starts the account's default interactive shell. A comm
 
 - SSH remains responsible for host verification, user authentication, encryption, and integrity.
 - AFK exposes no TCP or UDP listener.
-- AFK stores at most the last 1 MiB of terminal output after observed process completion; it does not store a separate input stream.
+- AFK stores at most the last 256 KiB of terminal output after observed process completion; it does not store a separate input stream.
 - The PTY is always drained so a disconnected client cannot block the shell.
-- Live reattachment does not replay missed output; the bounded tail is exposed only after completion.
+- Live reattachment replays the bounded raw tail but does not reconstruct terminal screen state.
 - Local IPC records and attachment queues are bounded.
 - Reattachment never silently creates a replacement shell.
 - No telemetry, hosted AFK dependency, or dependency on a particular SSH client.
