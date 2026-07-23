@@ -2,25 +2,38 @@ use crate::limits::MAX_TERMINAL_DIMENSION;
 use rustix::fd::{AsFd, OwnedFd};
 use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
 use rustix::process::{ioctl_tiocsctty, setsid};
-use rustix::pty::{OpenptFlags, grantpt, ioctl_tiocgptpeer, openpt, unlockpt};
 use rustix::termios::{
     OptionalActions, Termios, Winsize, tcgetattr, tcgetwinsize, tcsetattr, tcsetwinsize,
 };
 use std::io;
+use std::os::unix::net::UnixStream;
 
 pub(crate) fn create_pty(rows: u16, columns: u16) -> io::Result<(OwnedFd, OwnedFd)> {
     validate_dimensions(rows, columns)?;
-    let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC)
-        .map_err(io::Error::from)?;
-    grantpt(&master).map_err(io::Error::from)?;
-    unlockpt(&master).map_err(io::Error::from)?;
-    let slave = ioctl_tiocgptpeer(
-        &master,
-        OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC,
+    let pty = rustix_openpty::openpty(
+        None,
+        Some(&Winsize {
+            ws_row: rows,
+            ws_col: columns,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        }),
     )
     .map_err(io::Error::from)?;
-    set_window_size(&slave, rows, columns)?;
-    Ok((master, slave))
+    Ok((pty.controller, pty.user))
+}
+
+pub(crate) fn peer_uid(stream: &UnixStream) -> io::Result<Option<u32>> {
+    #[cfg(target_os = "linux")]
+    {
+        let credentials = rustix::net::sockopt::socket_peercred(stream).map_err(io::Error::from)?;
+        Ok(Some(credentials.uid.as_raw()))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = stream;
+        Ok(None)
+    }
 }
 
 pub(crate) fn become_session_leader() -> io::Result<()> {
@@ -63,22 +76,28 @@ pub(crate) fn set_window_size(fd: impl AsFd, rows: u16, columns: u16) -> io::Res
 
 pub(crate) struct RawTerminal {
     fd: OwnedFd,
-    original: Termios,
+    original: Option<Termios>,
     flags: OFlags,
 }
 
 impl RawTerminal {
     pub(crate) fn enter(fd: impl AsFd) -> io::Result<Self> {
         let owned = rustix::io::dup(&fd).map_err(io::Error::from)?;
-        let original = tcgetattr(&fd).map_err(io::Error::from)?;
-        let mut raw = original.clone();
-        raw.make_raw();
-        tcsetattr(&fd, OptionalActions::Now, &raw).map_err(io::Error::from)?;
-        let flags = match set_nonblocking(&fd) {
-            Ok(flags) => flags,
+        let flags = set_nonblocking(&fd)?;
+        let original = match tcgetattr(&fd) {
+            Ok(original) => {
+                let mut raw = original.clone();
+                raw.make_raw();
+                if let Err(error) = tcsetattr(&fd, OptionalActions::Now, &raw) {
+                    let _ = restore_flags(&fd, flags);
+                    return Err(io::Error::from(error));
+                }
+                Some(original)
+            }
+            Err(rustix::io::Errno::NOTTY | rustix::io::Errno::NODEV) => None,
             Err(error) => {
-                let _ = tcsetattr(fd, OptionalActions::Now, &original);
-                return Err(error);
+                let _ = restore_flags(&fd, flags);
+                return Err(io::Error::from(error));
             }
         };
         Ok(Self {
@@ -92,7 +111,9 @@ impl RawTerminal {
 impl Drop for RawTerminal {
     fn drop(&mut self) {
         let _ = restore_flags(&self.fd, self.flags);
-        let _ = tcsetattr(&self.fd, OptionalActions::Now, &self.original);
+        if let Some(original) = &self.original {
+            let _ = tcsetattr(&self.fd, OptionalActions::Now, original);
+        }
     }
 }
 

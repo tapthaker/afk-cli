@@ -6,12 +6,13 @@ use crate::limits::{
     MAX_PTY_BYTES_PER_TICK, OUTPUT_TAIL_BYTES, STOP_GRACE_SECONDS,
 };
 use crate::output_tail::{OutputTail, TRUNCATION_MARKER};
-use crate::platform::linux::{become_session_leader, create_pty, set_nonblocking, set_window_size};
+use crate::platform::unix::{
+    become_session_leader, create_pty, peer_uid, set_nonblocking, set_window_size,
+};
 use crate::registry::{Registry, SessionFiles, SessionMetadata, now_seconds};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::fd::AsFd;
 use rustix::fs::Mode;
-use rustix::net::sockopt::socket_peercred;
 use rustix::process::{Pid, Signal, getpid, getuid, kill_process, umask};
 use std::ffi::OsString;
 use std::fs::File;
@@ -96,7 +97,7 @@ pub(crate) fn hidden_runner(session: SessionId) -> io::Result<()> {
 pub(crate) fn hidden_child(command: Vec<OsString>) -> io::Result<()> {
     become_session_leader()?;
     let stdin = std::io::stdin();
-    crate::platform::linux::acquire_controlling_terminal(stdin.as_fd())?;
+    crate::platform::unix::acquire_controlling_terminal(stdin.as_fd())?;
     let Some(program) = command.first() else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -317,8 +318,7 @@ fn accept_candidate(files: &SessionFiles, candidate: &mut Option<Connection>) ->
     loop {
         match files.listener.accept() {
             Ok((stream, _)) => {
-                let credentials = socket_peercred(&stream).map_err(io::Error::from)?;
-                if credentials.uid != getuid() {
+                if peer_uid(&stream)?.is_some_and(|uid| uid != getuid().as_raw()) {
                     continue;
                 }
                 stream.set_nonblocking(true)?;

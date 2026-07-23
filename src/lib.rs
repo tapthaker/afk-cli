@@ -1,23 +1,23 @@
 #![deny(unsafe_code)]
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod byte_queue;
 mod cli;
 mod identity;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod ipc;
 mod limits;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod output_tail;
 mod platform;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod attach;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod registry;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod runner;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session;
 
 use cli::{Command, ParseError};
@@ -60,7 +60,7 @@ Usage:\n\
     afk sessions [--json]\n\
     afk stop SESSION_ID\n\
 \n\
-Session commands require Linux.\n";
+Session commands require Linux or macOS.\n";
 
 const MISSING_COMMAND: &str = "error: a command or option is required\n\
 Try 'afk --help' for usage.\n";
@@ -100,7 +100,7 @@ where
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_session_command(
     command: Command,
     stdout: &mut impl Write,
@@ -128,16 +128,16 @@ fn run_session_command(
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn run_session_command(
     _command: Command,
     _stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> ExitStatus {
-    write_failure(stderr, "error: session commands require Linux\n")
+    write_failure(stderr, "error: session commands require Linux or macOS\n")
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn write_session_error(stderr: &mut impl Write, kind: std::io::ErrorKind) -> ExitStatus {
     let message = match kind {
         std::io::ErrorKind::AlreadyExists => "error: session already exists\n",

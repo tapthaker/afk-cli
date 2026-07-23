@@ -23,8 +23,9 @@ path = "src/lib.rs"
 name = "afk"
 path = "src/main.rs"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-rustix = { version = "1.1.4", features = ["event", "fs", "net", "process", "pty", "stdio", "termios"] }
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+rustix = { version = "1.1.4", features = ["event", "fs", "net", "process", "stdio", "termios"] }
+rustix-openpty = "0.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 signal-hook = "0.3.18"

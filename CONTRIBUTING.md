@@ -36,7 +36,7 @@ IPC parsers, PTY code, and terminal-facing code may also require fuzz, sanitizer
 
 ## Rust toolchain
 
-The repository pins Rust 1.85.0 and declares 1.85 as its initial minimum supported Rust version (MSRV). Toolchain or MSRV changes must be focused, documented, and validated against both Linux musl targets. The package uses Rust 2024 edition.
+The repository pins Rust 1.85.0 and declares 1.85 as its initial minimum supported Rust version (MSRV). Toolchain or MSRV changes must be focused, documented, and validated against both Linux musl and both macOS release targets. The package uses Rust 2024 edition.
 
 Do not weaken a check to merge a change. Fix the issue or document and review a narrowly scoped exception.
 

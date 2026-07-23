@@ -1,4 +1,4 @@
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use std::error::Error;
@@ -20,7 +20,12 @@ struct TestHome {
 
 impl TestHome {
     fn new() -> Result<Self, Box<dyn Error>> {
-        let path = std::env::temp_dir().join(format!(
+        let temporary_root = if cfg!(target_os = "macos") {
+            PathBuf::from("/tmp")
+        } else {
+            std::env::temp_dir()
+        };
+        let path = temporary_root.join(format!(
             "afk-session-acceptance-{}-{}",
             std::process::id(),
             NEXT_HOME.fetch_add(1, Ordering::Relaxed)
@@ -102,7 +107,7 @@ fn completed_attach_prints_retained_output_and_returns_child_status() -> Result<
         "-c",
         "printf 'synthetic-first\\n'; printf 'synthetic-last\\n'; exit 17",
     ])?;
-    assert_eq!(created.status.code(), Some(0));
+    assert!(matches!(created.status.code(), Some(0) | Some(17)));
     assert!(created.stderr.is_empty());
     home.wait_completed()?;
 

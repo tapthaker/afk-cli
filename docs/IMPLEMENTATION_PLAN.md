@@ -20,23 +20,25 @@ src/
   runner.rs        persistent PTY owner
   attach.rs        terminal forwarding
   platform/
-    linux.rs       PTY, process, peer, and polling operations
+    unix.rs        PTY, process, peer, and terminal operations
 ```
 
 Modules are added only when they carry behavior. Do not split the package into internal crates unless a real independent API appears.
 
 ## 2. Technical choices
 
-### Linux musl first
+### Linux musl and macOS
 
-Initial targets are:
+Supported release targets are:
 
 ```text
 x86_64-unknown-linux-musl
 aarch64-unknown-linux-musl
+x86_64-apple-darwin
+aarch64-apple-darwin
 ```
 
-Both artifacts are static. Linux-specific operations stay under `platform` so they do not leak into CLI, IPC, or registry code.
+The Linux artifacts are static. Shared Unix operations stay under `platform` so they do not leak into CLI, IPC, or registry code. Target-specific socket limits and peer checks remain explicit.
 
 ### One synchronous runner loop
 
@@ -70,7 +72,8 @@ Use the standard library where it remains clear. Expected dependencies are:
 
 | Need | Candidate | Rule |
 | --- | --- | --- |
-| Unix and PTY operations | `rustix` | Enable only required features. |
+| Unix operations | `rustix` | Enable only required features. |
+| Portable PTY creation | `rustix-openpty` | Safe wrapper for Linux and Apple PTY allocation. |
 | Signal registration | `signal-hook` | Atomic flags only; no signal thread. |
 | CLI parsing | `lexopt` | Add only if the current parser becomes unclear. |
 | Metadata JSON | `serde`, `serde_json` | Cap file size before parsing; never serialize terminal data. |
@@ -79,7 +82,7 @@ Do not add Tokio, TLS, terminal emulation, a general wire serializer, or a gener
 
 ### Unsafe and panic behavior
 
-Keep unwinding enabled so terminal-mode guards can restore the invoking terminal. Unsafe Rust remains denied. The Linux spike confirmed a safe design: spawn fresh hidden runner and child-helper modes, perform `setsid` and controlling-terminal setup in those fresh processes, and avoid `fork`, `pre_exec`, and project-owned unsafe code.
+Keep unwinding enabled so terminal-mode guards can restore the invoking terminal. Unsafe Rust remains denied in project code. Linux and macOS use fresh hidden runner and child-helper modes, perform `setsid` and controlling-terminal setup in those fresh processes, and avoid project-owned `fork`, `pre_exec`, and unsafe code.
 
 ## 3. Process startup
 
@@ -91,7 +94,7 @@ Keep unwinding enabled so terminal-mode guards can restore the invoking terminal
 6. The runner reports `Ready` or a typed error.
 7. The launcher becomes an attachment after the runner reports readiness.
 
-The disposable Linux spike established this sequence on AArch64 and x86-64 musl. Production integration tests must preserve the same invariants and must not rely on `nohup` behavior.
+The disposable Linux spike established this sequence on AArch64 and x86-64 musl. Native macOS integration tests subsequently validated the same runner, PTY, replay, completion, and reattachment behavior. Production tests must preserve these invariants and must not rely on `nohup` behavior.
 
 ## 4. Runner behavior
 
@@ -195,7 +198,7 @@ Exit: a public prerelease demonstrates the same shell surviving real SSH transpo
 - Never print IPC or PTY payloads on failure.
 - Keep public errors bounded and independent of supplied arguments.
 - Update architecture and threat model when behavior changes.
-- Record size and dependency deltas for both musl targets.
+- Record size and dependency deltas for all four release targets.
 
 ## 7. Measurements
 
@@ -214,8 +217,10 @@ The current artifact checks remain under `tests/acceptance/`.
 Initial lifecycle implementation measurement (Rust 1.85.0, stripped release profile):
 
 ```text
-AArch64 musl   664,360 bytes; 346,177 bytes gzip -9
-x86-64 musl    756,552 bytes; 365,283 bytes gzip -9
+AArch64 musl   666,504 bytes; 347,411 bytes gzip -9
+x86-64 musl    758,984 bytes; 366,463 bytes gzip -9
+Apple arm64    590,720 bytes; 288,622 bytes gzip -9
+Apple x86-64   602,880 bytes; 301,583 bytes gzip -9
 ```
 
-Direct Linux dependencies are `rustix`, `signal-hook`, `serde`, and `serde_json`; Cargo Deny verifies their transitive licenses, advisories, sources, and duplicate-version policy.
+Direct Unix dependencies are `rustix`, `rustix-openpty`, `signal-hook`, `serde`, and `serde_json`; Cargo Deny verifies their transitive licenses, advisories, sources, and duplicate-version policy.

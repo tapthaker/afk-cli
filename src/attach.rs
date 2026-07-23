@@ -3,7 +3,7 @@ use crate::identity::SessionId;
 use crate::ipc::{Decoder, ProcessExit, Record, encode};
 use crate::limits::{MAX_ATTACHMENT_QUEUE_BYTES, MAX_IPC_PAYLOAD_BYTES};
 use crate::output_tail::TRUNCATION_MARKER;
-use crate::platform::linux::{RawTerminal, window_size};
+use crate::platform::unix::{RawTerminal, window_size};
 use crate::registry::{Registry, SessionMetadata};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::fd::AsFd;
@@ -66,7 +66,7 @@ fn attach_live(mut stream: UnixStream, output: &mut impl Write) -> io::Result<Pr
     stream.set_nonblocking(true)?;
     let stdin = std::io::stdin();
     let dimensions = window_size(stdin.as_fd()).unwrap_or((24, 80));
-    let terminal = RawTerminal::enter(stdin.as_fd()).ok();
+    let terminal = RawTerminal::enter(stdin.as_fd())?;
     let signals = SignalFlags::register()?;
     let mut socket_output = ByteQueue::new(MAX_ATTACHMENT_QUEUE_BYTES);
     queue_record(
@@ -91,10 +91,18 @@ fn attach_live(mut stream: UnixStream, output: &mut impl Write) -> io::Result<Pr
             }
         }
 
-        let mut descriptors = Vec::with_capacity(2);
         if !stdin_closed {
-            descriptors.push(PollFd::new(&input, PollFlags::IN));
+            stdin_closed = read_input(&mut input, &mut socket_output)?;
         }
+
+        let mut descriptors = Vec::with_capacity(2);
+        let stdin_index = if !stdin_closed && cfg!(target_os = "linux") {
+            let index = descriptors.len();
+            descriptors.push(PollFd::new(&input, PollFlags::IN));
+            Some(index)
+        } else {
+            None
+        };
         let socket_index = descriptors.len();
         descriptors.push(PollFd::new(
             &stream,
@@ -115,17 +123,10 @@ fn attach_live(mut stream: UnixStream, output: &mut impl Write) -> io::Result<Pr
         let events: Vec<PollFlags> = descriptors.iter().map(PollFd::revents).collect();
         drop(descriptors);
 
-        if !stdin_closed && events[0].intersects(PollFlags::IN | PollFlags::HUP | PollFlags::ERR) {
-            let mut bytes = [0_u8; IO_CHUNK_BYTES];
-            match input.read(&mut bytes) {
-                Ok(0) => stdin_closed = true,
-                Ok(length) => {
-                    queue_record(&mut socket_output, &Record::Input(bytes[..length].to_vec()))?
-                }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error) => return Err(error),
-            }
+        if stdin_index.is_some_and(|index| {
+            events[index].intersects(PollFlags::IN | PollFlags::HUP | PollFlags::ERR)
+        }) {
+            stdin_closed = read_input(&mut input, &mut socket_output)?;
         }
         let socket_event = events[socket_index];
         if socket_event.contains(PollFlags::OUT) {
@@ -154,6 +155,20 @@ fn attach_live(mut stream: UnixStream, output: &mut impl Write) -> io::Result<Pr
             drop(terminal);
             return Ok(ProcessExit::Code(0));
         }
+    }
+}
+
+fn read_input(input: &mut impl Read, socket_output: &mut ByteQueue) -> io::Result<bool> {
+    let mut bytes = [0_u8; IO_CHUNK_BYTES];
+    match input.read(&mut bytes) {
+        Ok(0) => Ok(true),
+        Ok(length) => {
+            queue_record(socket_output, &Record::Input(bytes[..length].to_vec()))?;
+            Ok(false)
+        }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(false),
+        Err(error) => Err(error),
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::attach;
 use crate::identity::SessionId;
 use crate::ipc::ProcessExit;
-use crate::platform::linux::window_size;
+use crate::platform::unix::window_size;
 use crate::registry::{ExitMetadata, Registry, SessionMetadata};
 use crate::runner;
 use rustix::fd::AsFd;

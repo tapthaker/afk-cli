@@ -59,7 +59,7 @@ Controls:
 - mode-0700 runtime directory;
 - owner-only socket and lock;
 - ownership verification;
-- peer credential checks where supported;
+- Linux peer credential checks; macOS relies on the owner-only directory and socket because the selected safe Unix API does not expose `getpeereid`;
 - strictly validated 128-bit session IDs;
 - no public listener.
 
@@ -169,7 +169,7 @@ Controls:
 - TERM-to-KILL escalation has a fixed timeout;
 - unrelated-process and PID-reuse cases are integration-tested.
 
-Stop is best effort for descendants. A process that ignores terminal hangup and termination or creates a new Unix session may survive. AFK does not add `/proc` scanning or claim process isolation.
+Stop is best effort for descendants. A process that ignores terminal hangup and termination or creates a new Unix session may survive. AFK does not scan the platform process table or claim process isolation.
 
 ### Runner killed with SSH login
 
@@ -180,7 +180,7 @@ Controls:
 - the runner detaches before attachment starts;
 - session and descriptor setup is checked;
 - integration tests kill the launcher and SSH transport;
-- AFK documents that cgroup or administrator policy can override detachment;
+- AFK documents that login-session, service-manager, or administrator policy can override detachment;
 - unsupported hosts are reported rather than hidden behind a false success.
 
 ### Retained output exposes sensitive data
@@ -245,7 +245,7 @@ The initial implementation defines and tests at least:
 - session ID: 16 bytes encoded as 32 lowercase hexadecimal characters;
 - metadata file: 64 KiB;
 - terminal rows and columns: 1 through 4096;
-- Unix socket path: checked against the platform limit;
+- Unix socket path: 107 bytes on Linux and 103 bytes on macOS;
 - sessions returned by one listing: 1024;
 - stop grace period: five seconds;
 - command argv: 256 entries and 64 KiB aggregate;
@@ -258,14 +258,14 @@ There is no replay cursor, scrollback model, terminal snapshot, or separate inpu
 
 Unsafe Rust is denied by default. A required exception must have:
 
-- a dedicated Linux platform module;
+- a dedicated Unix platform module;
 - documented preconditions and invariants;
 - an explanation of why a safe API is insufficient;
 - no IPC parsing or runner state in the unsafe block;
 - focused platform tests;
 - independent review and sanitizer coverage where applicable.
 
-Low-level PTY operations do not justify unsafe code elsewhere.
+Low-level PTY operations do not justify unsafe code elsewhere. `rustix-openpty` encapsulates the platform `openpty` call behind a safe API; its small unsafe boundary, descriptor ownership, close-on-exec handling, and target support are dependency-review items.
 
 ## Security review gates
 
@@ -282,8 +282,9 @@ Before the process-survival implementation is accepted:
 
 Before a public release:
 
-- abrupt OpenSSH TCP loss is tested end to end;
+- abrupt OpenSSH TCP loss is tested end to end on supported hosts;
 - both musl artifacts have no dynamic dependencies;
+- native macOS session lifecycle tests pass and both Mach-O architectures build;
 - clean-image execution succeeds;
 - release checksums and provenance are verifiable;
 - the threat model is reconciled with the implementation.

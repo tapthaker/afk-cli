@@ -206,3 +206,18 @@ The dependency tree contained `rustix`, `signal-hook`, and their small permissiv
 - no separate terminal-input stream is persisted.
 
 Completed output and metadata retention is initially 24 hours and is cleaned lazily by later AFK commands.
+
+## 11. macOS implementation validation
+
+The shared Unix implementation was subsequently validated natively on Apple Silicon macOS:
+
+- safe PTY allocation through `rustix-openpty`;
+- independent runner and child Unix sessions;
+- controlling-terminal setup and interactive `/bin/sh` operation;
+- launcher detach followed by reattach to the same shell PID, cwd, and synthetic environment value;
+- raw-tail replay before new output;
+- completion output retention and exact exit status;
+- concurrent-create exclusion and symlink rejection;
+- Intel and Apple Silicon Mach-O cross-builds.
+
+macOS `poll` does not reliably report terminal stdin readiness. The attachment therefore sets stdin nonblocking and probes it once per bounded loop iteration, while continuing to poll the Unix socket. Linux retains direct stdin polling. This adds at most the 100 ms bounded poll interval to macOS input delivery and requires no worker thread or unsafe project code.

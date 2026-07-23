@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) const TRUNCATION_MARKER: &[u8] = b"\r\n[afk: earlier terminal output was truncated]\r\n";
 
 pub(crate) struct OutputTail {

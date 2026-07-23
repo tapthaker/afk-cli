@@ -1,17 +1,17 @@
 use crate::identity::SessionId;
 use crate::ipc::ProcessExit;
 use crate::limits::{
-    COMPLETED_RETENTION_SECONDS, LINUX_UNIX_SOCKET_PATH_BYTES, MAX_METADATA_BYTES,
-    MAX_SESSION_LIST_ENTRIES, OUTPUT_TAIL_BYTES,
+    COMPLETED_RETENTION_SECONDS, MAX_METADATA_BYTES, MAX_SESSION_LIST_ENTRIES, OUTPUT_TAIL_BYTES,
+    UNIX_SOCKET_PATH_BYTES,
 };
-use rustix::net::sockopt::socket_peercred;
+use crate::platform::unix::peer_uid;
 use rustix::process::getuid;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::linux::fs::MetadataExt as LinuxMetadataExt;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -131,7 +131,7 @@ impl Registry {
             lock: self.root.join(format!("{prefix}.lock")),
             output: self.root.join(format!("{prefix}.out")),
         };
-        if paths.socket.as_os_str().as_bytes().len() > LINUX_UNIX_SOCKET_PATH_BYTES {
+        if paths.socket.as_os_str().as_bytes().len() > UNIX_SOCKET_PATH_BYTES {
             return Err(invalid("AFK runtime socket path is too long"));
         }
         Ok(paths)
@@ -201,8 +201,7 @@ impl Registry {
         let paths = self.paths(session)?;
         verify_path(&paths.socket, self.uid, PathKind::Socket, 0o600)?;
         let stream = UnixStream::connect(&paths.socket)?;
-        let credentials = socket_peercred(&stream).map_err(io::Error::from)?;
-        if credentials.uid.as_raw() != self.uid {
+        if peer_uid(&stream)?.is_some_and(|uid| uid != self.uid) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "session peer owner mismatch",
@@ -333,7 +332,7 @@ fn ensure_private_directory(path: &Path) -> io::Result<()> {
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
                 return Err(invalid("AFK runtime path is not a directory"));
             }
-            if metadata.st_uid() != getuid().as_raw() {
+            if metadata.uid() != getuid().as_raw() {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     "AFK runtime directory owner mismatch",
@@ -350,7 +349,7 @@ fn ensure_private_directory(path: &Path) -> io::Result<()> {
 
 fn verify_path(path: &Path, uid: u32, kind: PathKind, mode: u32) -> io::Result<fs::Metadata> {
     let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() || metadata.st_uid() != uid {
+    if metadata.file_type().is_symlink() || metadata.uid() != uid {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "unsafe AFK runtime entry",
@@ -360,7 +359,7 @@ fn verify_path(path: &Path, uid: u32, kind: PathKind, mode: u32) -> io::Result<f
         PathKind::Regular => metadata.is_file(),
         PathKind::Socket => metadata.file_type().is_socket(),
     };
-    if !type_matches || metadata.st_mode() & 0o777 != mode {
+    if !type_matches || metadata.mode() & 0o777 != mode {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "invalid AFK runtime entry",

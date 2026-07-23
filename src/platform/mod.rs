@@ -1,2 +1,2 @@
-#[cfg(target_os = "linux")]
-pub(crate) mod linux;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) mod unix;

@@ -17,13 +17,13 @@ ssh -t host.example afk attach "$SESSION_ID"
 
 ## Project status
 
-AFK CLI is an early Linux-first implementation undergoing security and lifecycle hardening. It is not ready for production use yet.
+AFK CLI is an early Linux and macOS implementation undergoing security and lifecycle hardening. It is not ready for production use yet.
 
 The repository produces a self-contained executable named **`afk`**. It does not require a hosted service, open a network port, or run a machine-wide daemon. One user-owned runner process exists for each persistent terminal session.
 
 AFK CLI works through ordinary SSH PTY channels and does not depend on a particular SSH client or private integration.
 
-The Rust executable implements the session lifecycle on Linux and preserves side-effect-free help and version paths.
+The Rust executable implements the session lifecycle on Linux and macOS and preserves side-effect-free help and version paths.
 
 ## Commands
 
@@ -38,13 +38,13 @@ With no command, `stream` starts the account's default interactive shell. A comm
 
 ## Releases
 
-Version tags publish direct, uncompressed binaries for x86-64 and AArch64 Linux musl plus Intel and Apple Silicon macOS. The session lifecycle remains Linux-only; current macOS binaries expose help and version information. Release binaries include checksums and GitHub build-provenance attestations.
+Version tags publish direct, uncompressed binaries for x86-64 and AArch64 Linux musl plus Intel and Apple Silicon macOS. All four binaries implement the session lifecycle. Release binaries include checksums and GitHub build-provenance attestations.
 
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
-- [Linux runtime spike results](docs/SPIKE_RESULTS.md)
+- [Runtime spike and platform validation results](docs/SPIKE_RESULTS.md)
 - [Release process and artifacts](docs/RELEASE.md)
 - [Acceptance tests](tests/acceptance/README.md)
 - [Threat model](docs/THREAT_MODEL.md)

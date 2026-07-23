@@ -17,7 +17,7 @@ afk-macos-aarch64
 
 The Linux binaries are static musl ELF executables and are checked for the absence of `PT_INTERP` and `DT_NEEDED`. The macOS binaries are ad-hoc signed but are not Developer ID signed or notarized.
 
-AFK's session lifecycle is currently Linux-only. The macOS binaries provide the side-effect-free help and version commands and report that session commands require Linux. They are published now so packaging and future platform support use stable asset names.
+All four binaries implement AFK's session lifecycle. Linux uses static musl artifacts; macOS uses native Mach-O artifacts for Intel and Apple Silicon.
 
 ## Creating a release
 

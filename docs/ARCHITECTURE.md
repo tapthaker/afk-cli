@@ -8,7 +8,7 @@
 
 ## 1. Purpose
 
-AFK CLI keeps a user-owned terminal process alive when its SSH connection disappears.
+AFK CLI keeps a user-owned terminal process alive when its SSH connection disappears. The initial supported hosts are Linux and macOS.
 
 ```text
 SSH connection
@@ -138,7 +138,7 @@ The launcher creates a private startup socket pair and starts the same executabl
 
 The launcher attaches only after `Ready`. Every system-call result is checked. `nohup` alone is not sufficient.
 
-Host cgroup or administrator policy may still kill detached processes. AFK must not claim survival where host policy prevents it.
+Host login-session, service-manager, or administrator policy may still kill detached processes. AFK must not claim survival where host policy prevents it.
 
 ## 5. Local Unix socket
 
@@ -219,7 +219,7 @@ No other interactive signal needs forwarding:
 
 `SIGHUP`, `SIGTERM`, or other termination received by the attachment ends only that attachment. It must not terminate the persistent session process.
 
-The runner uses process APIs internally to observe child exit. `afk stop` closes the inner PTY, sends `SIGTERM` to the verified child session leader, waits five seconds, and sends `SIGKILL` if that process remains. It does not scan unrelated processes through `/proc`.
+The runner uses process APIs internally to observe child exit. `afk stop` closes the inner PTY, sends `SIGTERM` to the verified child session leader, waits five seconds, and sends `SIGKILL` if that process remains. It does not scan the platform process table for descendants.
 
 ## 7. Runtime files
 
@@ -247,7 +247,7 @@ Requirements:
 - no symlink traversal;
 - exclusive creation;
 - atomic metadata replacement;
-- Unix socket path-length validation;
+- platform-specific Unix socket path-length validation;
 - bounded metadata read before JSON parsing;
 - completed output mode 0600 and size at most 256 KiB;
 - atomic completed-output replacement;
@@ -289,6 +289,7 @@ in-memory output tail        256 KiB
 completed output file        256 KiB
 metadata file                64 KiB
 terminal rows/columns         1..=4096
+Unix socket path              107 bytes Linux / 103 bytes macOS
 sessions returned per list    1024
 PTY bytes processed per tick  256 KiB
 stop grace period              5 seconds
@@ -306,13 +307,13 @@ Security requirements:
 - stop signals only the verified child session leader and documents best-effort descendant cleanup;
 - terminal and IPC payloads never enter diagnostics or metadata;
 - only the bounded completed-output file may persist raw terminal output;
-- unsafe Rust is denied except for a narrowly reviewed platform operation when no safe API exists.
+- unsafe Rust is denied in project code; portable PTY setup is delegated to a reviewed safe dependency.
 
 AFK does not isolate mutually untrusted people sharing one Unix UID. Detailed controls and exclusions are in [THREAT_MODEL.md](THREAT_MODEL.md).
 
 ## 10. Implementation and acceptance
 
-Rust module boundaries, dependencies, and delivery steps are maintained in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). Linux PTY, signal, thread, stop, and socket-path experiments are recorded in [SPIKE_RESULTS.md](SPIKE_RESULTS.md).
+Rust module boundaries, dependencies, and delivery steps are maintained in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). Linux PTY experiments and subsequent macOS validation are recorded in [SPIKE_RESULTS.md](SPIKE_RESULTS.md).
 
 Concrete disconnect, malformed-input, process, SSH, and static-artifact criteria are maintained in the [acceptance test catalog](../tests/acceptance/README.md).
 
