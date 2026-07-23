@@ -35,11 +35,13 @@ Session lifecycle is not implemented yet.
 ## Planned commands
 
 ```bash
-afk stream SESSION_ID
+afk stream SESSION_ID [-- COMMAND [ARG...]]
 afk attach SESSION_ID
 afk sessions [--json]
 afk stop SESSION_ID
 ```
+
+With no command, `stream` starts the account's default interactive shell. A command after `--` is executed directly as argv without an intermediate shell.
 
 ## Documentation
 

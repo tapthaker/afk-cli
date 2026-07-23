@@ -22,9 +22,10 @@ The current package implements CLI-001 and CLI-002 plus the release-artifact dep
 | --- | --- | --- |
 | CLI-001 | `afk --version` succeeds without creating runtime files. | Step 0 |
 | CLI-002 | Invalid arguments return exit code 2 and bounded stderr without echoing the argument. | Step 0 |
-| CLI-003 | `stream` requires exactly one valid session ID and rejects `--detach`. | Step 1A/2A |
-| CLI-004 | `attach` and `stop` reject malformed or missing session IDs. | Step 1A/3 |
-| CLI-005 | A failed `attach` never creates a shell or runtime entry. | Step 2B |
+| CLI-003 | `stream` requires exactly one valid session ID, accepts optional argv after `--`, and rejects `--detach`. | Step 1A/2A |
+| CLI-004 | Explicit command arguments, including shell metacharacters, are passed literally without `sh -c`. | Step 2A |
+| CLI-005 | `attach` and `stop` reject malformed or missing session IDs. | Step 1A/3 |
+| CLI-006 | A failed `attach` never creates a process or runtime entry. | Step 2B |
 
 ### Local IPC and runtime files
 
@@ -44,15 +45,16 @@ The current package implements CLI-001 and CLI-002 plus the release-artifact dep
 
 | ID | Criterion | First step |
 | --- | --- | --- |
-| PROC-001 | Launcher exit leaves the runner, PTY, and shell alive. | Step 2A |
+| PROC-001 | Launcher exit leaves the runner, PTY, and default shell or explicit command alive. | Step 2A |
 | PROC-002 | Closing an attachment does not change the shell PID or cwd. | Step 2B |
 | PROC-003 | Continuous output while detached does not block the child. | Step 2A |
-| PROC-004 | Reattach reaches the same shell PID and synthetic shell variable. | Step 2B |
-| PROC-005 | Terminal resize reaches the runner-owned PTY. | Step 2B |
-| PROC-006 | A 1 MiB full output queue drops the slow attachment while the child continues. | Step 2B |
-| PROC-007 | A new attachment replaces a stale attachment and becomes the only input owner. | Step 2B |
-| PROC-008 | `stop` terminates the intended process group and not an unrelated process. | Step 3 |
-| PROC-009 | Shell exit removes socket, lock, and metadata. | Step 3 |
+| PROC-004 | Reattach reaches the same default-shell PID and synthetic shell variable. | Step 2B |
+| PROC-005 | Reattach reaches the same PID for an explicitly supplied long-running command. | Step 2B |
+| PROC-006 | Terminal resize reaches the runner-owned PTY. | Step 2B |
+| PROC-007 | A 1 MiB full output queue drops the slow attachment while the child continues. | Step 2B |
+| PROC-008 | A new attachment replaces a stale attachment and becomes the only input owner. | Step 2B |
+| PROC-009 | `stop` terminates the intended process group and not an unrelated process. | Step 3 |
+| PROC-010 | Session-process exit removes socket, lock, and metadata. | Step 3 |
 
 ### OpenSSH disconnect
 

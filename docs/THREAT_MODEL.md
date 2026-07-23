@@ -8,7 +8,7 @@ This document covers the small initial AFK CLI design: a persistent user-owned P
 
 AFK protects:
 
-- continuity of the intended shell and PTY;
+- continuity of the intended shell or command and its PTY;
 - terminal input and output while SSH transports it;
 - control of a session from other Unix users;
 - integrity of session metadata and lifecycle operations;
@@ -115,36 +115,36 @@ Controls:
 
 ### In-flight input during disconnect
 
-Threat: the user cannot know whether the final bytes before a network failure reached the shell.
+Threat: the user cannot know whether the final bytes before a network failure reached the session process.
 
 Control: AFK makes no exactly-once claim and does not automatically resend input. This is the same uncertainty present in an ordinary interrupted SSH terminal. Avoiding automatic retries prevents AFK from duplicating a command.
 
 ### Wrong-session fallback
 
-Threat: a failed attach starts a new shell and the user mistakes it for the original process.
+Threat: a failed attach starts a new process and the user mistakes it for the original session.
 
 Controls:
 
 - create and attach are distinct operations;
 - `attach` never creates;
-- an explicit `stream` action is required to start a shell;
+- an explicit `stream` action is required to start a process;
 - session ID and safe process metadata are shown to the user.
 
 ### Shell injection
 
-Threat: a session ID or argument enters a shell command string.
+Threat: a session ID or command argument enters a shell command string.
 
 Controls:
 
 - session IDs accept exactly 32 lowercase hexadecimal characters;
-- shell startup uses argv APIs;
+- the default shell is executed directly from a validated absolute path;
+- an explicit command is passed as an exact bounded argv vector;
 - no `sh -c` wraps user-provided values;
-- the initial release does not accept arbitrary child commands;
 - no IPC value is interpolated into a command string.
 
 ### Process-group escape
 
-Threat: `stop` kills an unrelated process or fails to terminate the intended shell tree.
+Threat: `stop` kills an unrelated process or fails to terminate the intended session tree.
 
 Controls:
 
@@ -211,6 +211,7 @@ The initial implementation defines and tests at least:
 - Unix socket path: checked against the platform limit;
 - sessions returned by one listing: 1024;
 - stop grace period: five seconds;
+- command argv: 256 entries and 64 KiB aggregate;
 - PTY bytes processed per event-loop tick: 256 KiB.
 
 There is no replay buffer, scrollback buffer, terminal snapshot, or completed-session retention in the initial design.

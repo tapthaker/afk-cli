@@ -22,7 +22,7 @@ afk session runner             persistent
       |
       | PTY master
       v
-login shell and child processes
+default shell or explicit command
 ```
 
 When SSH disconnects, the attach process and its socket connection end. The runner keeps the PTY and shell alive. A later SSH connection starts another attach process and connects to the same runner.
@@ -64,7 +64,7 @@ The initial command surface is:
 ```text
 afk --help
 afk --version
-afk stream SESSION_ID
+afk stream SESSION_ID [-- COMMAND [ARG...]]
 afk attach SESSION_ID
 afk sessions [--json]
 afk stop SESSION_ID
@@ -72,13 +72,14 @@ afk stop SESSION_ID
 
 ### `afk stream`
 
-`stream` requires a session ID, creates a runner, starts the account's login shell in a PTY, and attaches immediately.
+`stream` requires a session ID, creates a runner and PTY, starts a process, and attaches immediately.
 
 - The ID must contain exactly 32 lowercase hexadecimal characters.
 - The caller chooses the ID before starting the SSH command.
-- A caller-known ID allows a safe retry after an uncertain SSH disconnect.
-- If the same ID already has a live runner, `stream` attaches to it instead of creating another shell.
-- No detached creation, arbitrary command, or working-directory option is included initially.
+- With no command, AFK starts the account's default shell interactively without forcing login-shell mode. It uses `$SHELL` when it names an absolute executable file, with `/bin/sh` as a fallback.
+- A command after `--` is started as an exact argv vector without `sh -c` or shell interpolation.
+- The command is used only when creating a session. If the same ID already has a live runner, `stream` attaches to it instead of starting another process.
+- No detached creation or working-directory option is included initially.
 
 ### `afk attach`
 
@@ -121,9 +122,9 @@ sshd
         |
         +-- PTY master
               |
-              +-- login shell
+              +-- default shell or explicit command
                     |
-                    +-- foreground process tree
+                    +-- child process tree
 ```
 
 There is one runner per session and no global daemon.
@@ -137,7 +138,7 @@ The launcher creates a private startup socket pair and starts the current execut
 3. applies umask `077` and closes unrelated descriptors;
 4. creates and validates its runtime files;
 5. binds an owner-only Unix socket;
-6. creates the PTY and starts the login shell by argv;
+6. creates the PTY and starts the default shell or explicit command by argv;
 7. writes bounded safe metadata atomically;
 8. reports `Ready` or a typed error through the startup socket;
 9. enters the runner loop.
@@ -196,6 +197,7 @@ terminal rows/columns        1..=4096
 sessions returned per list   1024
 PTY bytes processed per tick 256 KiB
 stop grace period             5 seconds
+command arguments             256 entries / 64 KiB aggregate
 ```
 
 These values may change after measurement, but they never become unbounded.
@@ -256,7 +258,7 @@ The local controls are:
 - strict session-ID parsing;
 - bounded IPC records and queues;
 - symlink-safe runtime operations;
-- argv-based shell startup;
+- argv-based process startup without `sh -c`;
 - verified runner control before signaling;
 - no terminal data in logs or metadata.
 
@@ -377,7 +379,7 @@ The concrete criteria are maintained in the [acceptance test catalog](../tests/a
 ### Step 2: process survival
 
 - checked runner startup;
-- PTY and login shell;
+- PTY and default-shell or explicit-command startup;
 - always-drained output;
 - basic `stream` and `attach`;
 - prove disconnect/reconnect preserves the process.
@@ -402,7 +404,7 @@ The concrete criteria are maintained in the [acceptance test catalog](../tests/a
 - multiple simultaneous attachments;
 - attachment takeover;
 - compatibility with old runners after upgrade;
-- custom child commands and working directories;
+- custom working directories;
 - windows, panes, and scrollback;
 - host reboot persistence;
 - machine-wide service;

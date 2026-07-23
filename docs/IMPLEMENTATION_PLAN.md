@@ -82,10 +82,10 @@ Keep unwinding enabled so terminal-mode guards can restore the invoking terminal
 
 ## 3. Process startup
 
-1. `afk stream` validates its required 128-bit session ID.
+1. `afk stream` validates its required 128-bit session ID and optional argv after `--`.
 2. The launcher creates a private startup socket pair.
 3. It starts the current executable in hidden runner mode with that descriptor and detached standard streams.
-4. The runner calls checked session/process setup, creates owner-only runtime files, binds its Unix socket, creates a PTY, and starts the login shell.
+4. The runner creates owner-only runtime files, binds its Unix socket, creates a PTY, and starts either the validated `$SHELL` default or the exact supplied argv.
 5. The runner reports `Ready` or a typed error.
 6. The launcher becomes an attachment after the runner reports readiness.
 
@@ -119,7 +119,7 @@ No terminal state is reconstructed. Reattach begins with output produced after t
 
 ### Step 1A: limits, identity, and IPC
 
-- Add constants for record, queue, metadata, dimensions, and path bounds.
+- Add constants for record, queue, metadata, dimensions, path, and argv bounds.
 - Add `SessionId([u8; 16])` lowercase hexadecimal display and strict parsing.
 - Add the five-byte IPC header and record-kind validation.
 - Add round-trip, every-truncation, oversized-length, unknown-kind, and trailing-data tests.
@@ -139,12 +139,12 @@ Exit: concurrent or hostile filesystem entries cannot redirect session control.
 ### Step 2A: process-survival spike
 
 - Add checked hidden-runner startup and readiness response.
-- Create a PTY and login shell.
+- Create a PTY and start the default shell or an explicit command without `sh -c`.
 - Bind the owner-only Unix socket.
 - Drain PTY output with no attachment.
 - Add a test-only lifecycle observation that never exposes terminal bytes.
 
-Exit: killing the launcher leaves the runner, PTY, shell PID, and cwd alive.
+Exit: killing the launcher leaves the runner, PTY, child PID, and cwd alive for both default-shell and explicit-command sessions.
 
 ### Step 2B: stream and attach
 
