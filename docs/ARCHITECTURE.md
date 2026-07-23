@@ -29,7 +29,7 @@ When SSH disconnects, the attach process ends. The runner keeps the inner PTY an
 
 AFK does not implement SSH. SSH carries ordinary terminal stdin, stdout, and resize events to the remote `afk` attachment.
 
-The initial promise is process continuity. AFK does not reconstruct output produced while detached.
+The initial promise is process continuity. Live reattachment does not reconstruct missed screen state, but AFK retains a bounded output tail so a completed session can show its final output.
 
 ## 2. Scope
 
@@ -48,7 +48,7 @@ AFK does not provide:
 - a hosted service or account;
 - a machine-wide daemon;
 - a public wire protocol;
-- terminal emulation, replay, or recording;
+- terminal emulation or live replay;
 - windows, panes, or scrollback;
 - survival across host reboot.
 
@@ -81,7 +81,7 @@ afk stop SESSION_ID
 `attach` connects the invoking SSH terminal to an existing runner.
 
 - `attach` never creates a process.
-- For a retained completed session, `attach` prints the completion summary and returns the recorded exit status.
+- For a retained completed session, `attach` prints the retained raw output tail, a truncation marker when needed, and the completion summary, then returns the recorded exit status.
 - A new attachment replaces an older attachment so a stale SSH connection cannot block recovery.
 - The outer terminal enters raw mode and is restored when attachment ends.
 - Closing SSH, stdin, or the Unix socket detaches without stopping the session process.
@@ -173,8 +173,9 @@ Socket closure without an exit record represents attachment loss. No acknowledge
 The runner uses one nonblocking event loop for the inner PTY, listener, and active attachment.
 
 - PTY reads never wait for an attachment write.
-- With no attachment, PTY output is read and discarded.
-- A bounded queue holds output waiting for the active attachment.
+- Every PTY output byte is added to a 1 MiB in-memory tail ring.
+- With no attachment, output is still drained into that bounded ring.
+- A separate bounded queue holds output waiting for the active attachment.
 - If that queue fills, the attachment is closed and the runner continues draining output.
 - Accepting a new `Attach` closes the previous attachment socket.
 - Input in flight during a disconnect has the same uncertainty as ordinary SSH and is never automatically resent.
@@ -230,6 +231,7 @@ Per-session files:
 ~/.afk/run/<session-id>.sock
 ~/.afk/run/<session-id>.json
 ~/.afk/run/<session-id>.lock
+~/.afk/run/<session-id>.out
 ```
 
 Requirements:
@@ -243,6 +245,8 @@ Requirements:
 - atomic metadata replacement;
 - Unix socket path-length validation;
 - bounded metadata read before JSON parsing;
+- completed output mode 0600 and size at most 1 MiB;
+- atomic completed-output replacement;
 - stale cleanup verified through the live socket, not PID alone.
 
 The home-relative root does not depend on `$XDG_RUNTIME_DIR`, which may disappear when the final login ends.
@@ -258,13 +262,15 @@ A session completes when:
 
 There is no detached-session timeout. After process exit, the runner:
 
-1. records the exit code or signal and finish time atomically;
-2. sends an exit record to an active attachment;
-3. removes its socket and lock;
-4. retains the bounded metadata tombstone for 24 hours;
-5. exits.
+1. drains remaining PTY output into the tail ring;
+2. atomically writes the last 1 MiB of raw PTY output to the owner-only output file;
+3. records the exit code or signal, finish time, retained byte count, and truncation flag atomically;
+4. sends an exit record to an active attachment;
+5. removes its socket and lock;
+6. retains the output and metadata tombstone for 24 hours;
+7. exits.
 
-Any later AFK command lazily removes expired tombstones. AFK never retains terminal input or output. An attached command returns the child exit code; a signal exit returns the conventional `128 + signal` status.
+Any later AFK command lazily removes expired output and metadata. AFK does not persist a separate input stream, although terminal echo may place input bytes in captured output. If the runner is killed before observing process completion, its in-memory tail may be lost. An attached command returns the child exit code; a signal exit returns the conventional `128 + signal` status.
 
 Disconnect, replacement attachment, process exit, and stop are separate tested transitions.
 
@@ -275,6 +281,8 @@ Initial fixed bounds are:
 ```text
 IPC payload                  64 KiB
 attachment output queue       1 MiB
+in-memory output tail          1 MiB
+completed output file          1 MiB
 metadata file                64 KiB
 terminal rows/columns         1..=4096
 sessions returned per list    1024
@@ -292,7 +300,8 @@ Security requirements:
 - record lengths are checked before allocation;
 - process startup uses argv and never `sh -c` for supplied values;
 - stop signals only the verified child session leader and documents best-effort descendant cleanup;
-- terminal and IPC payloads are never logged or persisted;
+- terminal and IPC payloads never enter diagnostics or metadata;
+- only the bounded completed-output file may persist raw terminal output;
 - unsafe Rust is denied except for a narrowly reviewed platform operation when no safe API exists.
 
 AFK does not isolate mutually untrusted people sharing one Unix UID. Detailed controls and exclusions are in [THREAT_MODEL.md](THREAT_MODEL.md).

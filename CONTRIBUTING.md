@@ -80,7 +80,8 @@ Copyleft, source-available, non-commercial, or unclear licenses require explicit
 
 - Never include real terminal recordings, credentials, private hostnames, or production paths in tests.
 - Use synthetic sentinel values.
-- Never log terminal bytes, IPC input, environment values, or secrets.
+- Never place terminal bytes in diagnostics or metadata; the bounded completed-output store is the only persistence exception.
+- Never persist a separate terminal-input stream, environment values, or secrets intentionally.
 - Enforce input limits before allocating.
 - Do not introduce shell interpolation for session IDs or IPC values.
 - See `docs/THREAT_MODEL.md` and `SECURITY.md`.

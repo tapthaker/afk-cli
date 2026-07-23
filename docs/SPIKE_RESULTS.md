@@ -201,6 +201,8 @@ The dependency tree contained `rustix`, `signal-hook`, and their small permissiv
 - default-shell and explicit-command sessions inherit cwd and environment;
 - child exit code or signal is sent to an active attachment and persisted as bounded completion metadata;
 - attaching to retained completed metadata reports the outcome without creating a process;
-- terminal input and output are never persisted.
+- a later product decision added a 1 MiB in-memory PTY output tail, persisted only after observed process completion;
+- attaching to a completed session prints that raw tail, a truncation marker when needed, and the completion summary;
+- no separate terminal-input stream is persisted.
 
-Completion metadata retention is initially 24 hours and is cleaned lazily by later AFK commands.
+Completed output and metadata retention is initially 24 hours and is cleaned lazily by later AFK commands.

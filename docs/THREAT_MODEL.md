@@ -10,12 +10,13 @@ AFK protects:
 
 - continuity of the intended shell or command and its PTY;
 - terminal input and output while SSH transports it;
+- confidentiality and integrity of retained completed-output tails;
 - control of a session from other Unix users;
 - integrity of live and completed session metadata and lifecycle operations;
 - host memory and file descriptors from unbounded local IPC;
 - release artifact integrity.
 
-AFK does not store terminal contents. Shell history and files created by applications remain governed by those applications.
+AFK keeps a 1 MiB output tail in memory and writes it to an owner-only file after observed process completion. It does not persist a separate input stream, though terminal echo can place input in output. Shell history and files created by applications remain governed by those applications.
 
 ## Trust boundaries
 
@@ -110,7 +111,7 @@ Controls:
 - PTY reads remain enabled independently of attachment writes;
 - per-attachment output queue is byte-bounded;
 - a full queue disconnects the attachment;
-- with no attachment, output is read and discarded;
+- with no attachment, output is read into a 1 MiB tail ring;
 - disconnect never stops the child.
 
 ### Resize or signal reaches the wrong process
@@ -182,11 +183,27 @@ Controls:
 - AFK documents that cgroup or administrator policy can override detachment;
 - unsupported hosts are reported rather than hidden behind a false success.
 
+### Retained output exposes sensitive data
+
+Threat: terminal output contains commands, echoed input, tokens, or application secrets that remain readable after completion.
+
+Controls:
+
+- retain only the last 1 MiB;
+- keep the tail in memory while the process runs;
+- write it only after observed process completion;
+- create the completed-output file with mode 0600 under the owner-only runtime root;
+- never copy output into metadata or diagnostics;
+- remove output lazily after 24 hours;
+- document that terminal echo may include user input.
+
+A user or process already running under the same Unix UID is outside AFK's isolation claim.
+
 ### Terminal escape sequences
 
-Threat: child output contains malicious terminal escape sequences.
+Threat: retained child output contains escape sequences that execute terminal behaviors when printed by a later `attach`.
 
-Control: AFK treats output as opaque bytes and does not parse or persist it. The user's terminal emulator already receives untrusted remote output during ordinary SSH. AFK does not add a terminal parser to the attack surface.
+Control: AFK treats retained output as opaque bytes and prints it only after an explicit attach to that completed session. The user's terminal emulator already processes untrusted remote output during ordinary SSH. AFK does not add a terminal parser or sanitizer.
 
 ### Sensitive diagnostics
 
@@ -195,8 +212,8 @@ Threat: terminal bytes, input, arguments, environment values, or credentials ent
 Controls:
 
 - no telemetry;
-- no terminal recording;
-- no terminal bytes in diagnostics;
+- no separate input recording;
+- no terminal bytes in diagnostics or metadata;
 - bounded static or metadata-only errors;
 - owner-only metadata containing only safe lifecycle and completion fields;
 - sentinel tests verify sensitive values are not emitted;
@@ -221,6 +238,8 @@ The initial implementation defines and tests at least:
 
 - IPC payload: 64 KiB;
 - attachment output queue: 1 MiB;
+- in-memory output tail: 1 MiB;
+- completed-output file: 1 MiB;
 - session ID: 16 bytes encoded as 32 lowercase hexadecimal characters;
 - metadata file: 64 KiB;
 - terminal rows and columns: 1 through 4096;
@@ -231,7 +250,7 @@ The initial implementation defines and tests at least:
 - PTY bytes processed per event-loop tick: 256 KiB;
 - completed metadata retention: 24 hours.
 
-There is no replay buffer, scrollback buffer, terminal snapshot, or terminal-output retention in the initial design.
+There is no live replay, scrollback model, terminal snapshot, or separate input retention in the initial design.
 
 ## Unsafe code
 
@@ -256,6 +275,7 @@ Before the process-survival implementation is accepted:
 - detached high output does not block the child;
 - stop is constrained to the verified child session leader;
 - sentinel values do not appear in diagnostics or metadata;
+- completed-output files are owner-only, bounded, and expired with their metadata;
 - dependency, advisory, and license checks pass.
 
 Before a public release:

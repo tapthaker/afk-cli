@@ -104,9 +104,9 @@ Each event-loop cycle performs bounded work:
 5. flush the bounded output queue;
 6. block only when no immediate work remains.
 
-When detached, PTY output is read and discarded. When the active queue reaches 1 MiB, the attachment is dropped and PTY draining continues.
+Every PTY output byte enters a 1 MiB in-memory tail ring. When detached, output is drained into that ring without being sent. When the active queue reaches 1 MiB, the attachment is dropped and PTY draining continues.
 
-No terminal state is reconstructed. Reattach begins with output produced after the new connection and an applied resize.
+No terminal state is reconstructed. Live reattach begins with output produced after the new connection and an applied resize. After observed process completion, the runner atomically persists the bounded tail for completed-session retrieval.
 
 ### Resize and signals
 
@@ -127,7 +127,7 @@ No other interactive signal is proxied. Control characters remain input bytes, a
 
 ### Step 1A: limits, identity, and IPC
 
-- Add constants for record, queue, metadata, dimensions, path, and argv bounds.
+- Add constants for record, queue, output-tail, metadata, dimensions, path, and argv bounds.
 - Add `SessionId([u8; 16])` lowercase hexadecimal display and strict parsing.
 - Add the five-byte IPC header and validation for attach, input, output, resize, stop, and exit.
 - Add round-trip, every-truncation, oversized-length, unknown-kind, and trailing-data tests.
@@ -141,7 +141,8 @@ Exit: malformed IPC cannot allocate above its limit or enter runner state.
 - Add exclusive lock, owner-only socket path, bounded metadata, and atomic replacement.
 - Reject symlinks, overlong socket paths, malformed IDs, and oversized metadata.
 - Verify stale entries through the live socket rather than PID alone.
-- Add 24-hour completed metadata tombstones and lazy expiry cleanup.
+- Add 24-hour completed metadata and output tombstones with lazy expiry cleanup.
+- Validate owner-only output files before reading and cap them at 1 MiB.
 
 Exit: concurrent or hostile filesystem entries cannot redirect session control.
 
@@ -150,7 +151,7 @@ Exit: concurrent or hostile filesystem entries cannot redirect session control.
 - Add the spike-validated hidden-runner and child-helper startup sequence.
 - Create a PTY and start the default shell or an explicit command without `sh -c`.
 - Bind the owner-only Unix socket.
-- Drain PTY output with no attachment.
+- Drain PTY output into a byte-bounded tail ring with no attachment.
 - Add a test-only lifecycle observation that never exposes terminal bytes.
 
 Exit: killing the launcher leaves the single-threaded runner, PTY, child PID, cwd, and inherited synthetic environment value intact for both default-shell and explicit-command sessions.
@@ -167,7 +168,8 @@ Exit: repeated attach and disconnect reaches the same shell without blocking it.
 
 ### Step 3: lifecycle commands
 
-- Implement `sessions`, `sessions --json`, completed-session reporting, and `stop`.
+- Implement `sessions`, `sessions --json`, completed output/status reporting, and `stop`.
+- Persist the raw tail only after observed process completion and mark truncation in metadata.
 - Implement best-effort stop by closing the PTY and applying bounded TERM/KILL escalation to the verified child session leader; do not add `/proc` scanning.
 - Add slow-client, shell-exit, stale-cleanup, PID-reuse, and signal tests.
 
@@ -200,6 +202,7 @@ Track from each release build:
 - idle detached-runner RSS;
 - runner-ready latency;
 - open file descriptors while attached and detached;
-- highest configured output queue allocation.
+- highest configured output queue and tail-ring allocation;
+- completed-output file size and lazy-retention cleanup.
 
 The current artifact checks remain under `tests/acceptance/`.

@@ -14,14 +14,14 @@ AFK CLI persists one user-owned PTY process across SSH disconnections.
 - No TCP/UDP listener
 - No machine-wide daemon
 - No telemetry
-- No terminal input/output persisted to disk by default
+- Only the final bounded terminal-output tail is persisted after observed process completion
 - SSH owns host verification, authentication, encryption, and integrity
 
 ## Engineering rules
 
 1. Read `docs/ARCHITECTURE.md` and `docs/THREAT_MODEL.md` before implementation.
-2. Keep local IPC, queues, paths, and terminal dimensions explicitly bounded.
-3. Never log terminal bytes, input, environment values, or credentials.
+2. Keep local IPC, queues, retained output, paths, and terminal dimensions explicitly bounded.
+3. Never place terminal bytes in diagnostics or metadata; only the completed-output file may contain the bounded raw output tail.
 4. Do not interpolate session IDs or IPC values into shell commands.
 5. Deny unsafe Rust by default; exceptions require documented invariants and review.
 6. Keep dependencies permissively licensed and justify their size/attack surface.

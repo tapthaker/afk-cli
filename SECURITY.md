@@ -37,7 +37,7 @@ Security-sensitive areas include:
 - runtime path and Unix socket handling;
 - PTY/process-group lifecycle;
 - detach/reattach ordering and output draining;
-- exit-status and completed-metadata handling;
+- exit-status, completed metadata, and retained terminal-output handling;
 - terminal-mode restoration and resize forwarding;
 - artifact installation, verification, and rollback;
 - sensitive-data logging.
