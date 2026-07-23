@@ -1,18 +1,18 @@
 # Contributing to AFK CLI
 
-AFK CLI is security-sensitive infrastructure: it owns a remote PTY, parses untrusted terminal output, and accepts framed control traffic. Correctness, bounded resource use, and reviewability take priority over feature speed.
+AFK CLI is security-sensitive infrastructure: it owns a remote PTY, forwards untrusted terminal bytes, and accepts bounded local IPC. Correctness, bounded resource use, and reviewability take priority over feature speed.
 
 ## Current phase
 
-The project is in early implementation following its initial architecture and threat-model review. Design feedback is welcome through focused issues or pull requests. Proposals must describe behavior through the public CLI and protocol rather than assumptions about a particular or unpublished client integration.
+The project is in early implementation following its initial architecture and threat-model review. Design feedback is welcome through focused issues or pull requests. Proposals must describe behavior through the public CLI and documented process model rather than assumptions about a particular client integration.
 
 ## Contribution workflow
 
-1. Open an issue for protocol, security, process-lifecycle, dependency, or CLI-contract changes.
+1. Open an issue for IPC, security, process-lifecycle, dependency, or CLI-contract changes.
 2. Explain the user problem and failure modes before proposing code.
 3. Keep pull requests narrow.
 4. Add tests for success, disconnect, malformed input, and resource-limit behavior as applicable.
-5. Update architecture, protocol, threat model, or changelog when behavior changes.
+5. Update architecture, threat model, or changelog when behavior changes.
 6. Obtain at least one review independent from the author.
 
 ## Required checks
@@ -32,7 +32,7 @@ cargo test --workspace --all-targets
 cargo deny check
 ```
 
-Protocol parsers and terminal-facing code may also require fuzz, sanitizer, integration, cross-compilation, and OpenSSH E2E checks.
+IPC parsers, PTY code, and terminal-facing code may also require fuzz, sanitizer, integration, cross-compilation, and OpenSSH E2E checks.
 
 ## Rust toolchain
 
@@ -44,13 +44,10 @@ Do not weaken a check to merge a change. Fix the issue or document and review a 
 
 A written design note or ADR is required for changes to:
 
-- wire framing or stable error codes;
-- protocol negotiation;
-- input/output acknowledgement semantics;
-- session identity or takeover;
-- runtime filesystem layout;
-- process groups, daemonization, or signal behavior;
-- terminal engine or snapshot format;
+- local IPC framing, limits, or stable error codes;
+- session identity or runtime filesystem layout;
+- process groups, daemonization, PTY setup, or signal behavior;
+- attachment ownership or terminal-mode handling;
 - installation, updates, or artifact verification;
 - privacy or logging;
 - dependency/license policy;
@@ -83,9 +80,9 @@ Copyleft, source-available, non-commercial, or unclear licenses require explicit
 
 - Never include real terminal recordings, credentials, private hostnames, or production paths in tests.
 - Use synthetic sentinel values.
-- Never log terminal bytes, input frames, environment values, or secrets.
+- Never log terminal bytes, IPC input, environment values, or secrets.
 - Enforce input limits before allocating.
-- Do not introduce shell interpolation for protocol values.
+- Do not introduce shell interpolation for session IDs or IPC values.
 - See `docs/THREAT_MODEL.md` and `SECURITY.md`.
 
 Report vulnerabilities privately rather than through a public issue.

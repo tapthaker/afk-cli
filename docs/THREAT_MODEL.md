@@ -2,51 +2,52 @@
 
 **Status:** Draft
 
-This document defines the initial security boundary for AFK CLI. It must be updated when protocol or process-lifecycle behavior changes.
+This document covers the small initial AFK CLI design: a persistent user-owned PTY runner, short-lived SSH attachment processes, and owner-only local Unix sockets.
 
 ## Assets
 
 AFK protects:
 
-- integrity and confidentiality of terminal input/output while transported by SSH;
-- continuity of the intended PTY and shell;
-- isolation from other Unix users;
-- integrity of session metadata and control messages;
-- host resources against unbounded protocol or terminal input;
+- continuity of the intended shell and PTY;
+- terminal input and output while SSH transports it;
+- control of a session from other Unix users;
+- integrity of session metadata and lifecycle operations;
+- host memory and file descriptors from unbounded local IPC;
 - release artifact integrity.
 
-AFK does not persist terminal content to protect it after runner exit. Shell history and application-specific files remain governed by those applications.
+AFK does not store terminal contents. Shell history and files created by applications remain governed by those applications.
 
 ## Trust boundaries
 
 ### Trusted
 
-- the authenticated remote Unix account;
-- the SSH server and transport after the client verifies the host key;
-- the installed `afk` executable and its reviewed dependencies;
-- operating-system PTY and Unix socket primitives.
+- the authenticated Unix account;
+- SSH after the client verifies the host key;
+- the installed `afk` executable and reviewed dependencies;
+- operating-system PTY, process, and Unix-socket primitives.
 
 ### Untrusted
 
-- every protocol byte received from an attachment;
-- PTY output and escape sequences produced by applications;
-- filesystem entries found in the runtime directory before validation;
+- every IPC record received by a runner or attach process;
+- PTY output produced by applications;
+- runtime filesystem entries before validation;
 - stale metadata and PIDs;
-- terminal dimensions, names, cwd, argv, and environment-related requests;
+- session IDs, terminal dimensions, and command-line arguments;
 - downloaded release artifacts before verification;
-- timing and ordering around disconnect/reconnect.
+- disconnect timing and partial reads or writes.
 
 ### Outside the security claim
 
-- root or host administrator compromise;
+- root or host-administrator compromise;
 - compromise of the authenticated Unix account;
 - mutually untrusted people sharing one Unix UID;
-- malicious SSH server after a user explicitly trusts its key;
+- a malicious SSH server after its host key is trusted;
 - host reboot persistence;
 - kernel compromise;
-- denial of service by the session's own child process within the user's permissions.
+- denial of service by the session's own child process within the user's permissions;
+- reconstruction of terminal output produced while detached.
 
-## Primary threats and controls
+## Threats and controls
 
 ### Unauthorized local attachment
 
@@ -55,246 +56,197 @@ Threat: another local user connects to a session socket.
 Controls:
 
 - mode-0700 runtime directory;
-- mode-0600 sockets;
-- owner verification and symlink rejection;
-- peer credential checks where available;
-- random session IDs;
+- owner-only socket and lock;
+- ownership verification;
+- peer credential checks where supported;
+- random 128-bit session IDs;
 - no public listener.
 
 ### Runtime path replacement
 
-Threat: attacker replaces metadata, lock, or socket paths through symlinks or races.
+Threat: an attacker replaces metadata, lock, or socket paths through symlinks or races.
 
 Controls:
 
-- descriptor-relative filesystem operations where possible;
-- no-follow/openat-style primitives;
-- expected ownership and mode checks;
+- descriptor-relative operations where practical;
+- no-follow behavior and expected ownership checks;
 - exclusive creation;
-- atomic rename for metadata;
-- live socket handshake with session ID and epoch.
+- atomic metadata replacement;
+- bounded path lengths;
+- live socket verification before stale cleanup.
 
 ### PID reuse
 
-Threat: stale metadata points at an unrelated process that reused a PID.
+Threat: stale metadata names an unrelated process that reused a PID.
 
 Controls:
 
-- never use PID as identity;
-- require matching socket handshake and session epoch;
-- record/check platform process start identity where available;
-- signal only through a verified live runner control path.
+- PID is display metadata, not session identity;
+- `stop` connects to the owner-only runner socket;
+- process identity is verified through the live runner;
+- AFK never signals a PID solely because it appeared in a metadata file.
 
-### Oversized or malformed frames
+### Malformed IPC
 
-Threat: allocation exhaustion, integer overflow, parser confusion, or state-machine bypass.
+Threat: a malformed or oversized local record causes allocation exhaustion, overflow, or state confusion.
 
 Controls:
 
-- fixed header and checked arithmetic;
-- enforce length before allocation;
-- explicit per-kind and aggregate limits;
-- reject invalid state transitions;
-- fuzz frame and payload decoders;
-- bounded error responses.
+- fixed five-byte header;
+- checked big-endian payload length;
+- 64 KiB maximum record payload enforced before allocation;
+- exact payload length for fixed-size records such as resize;
+- unknown kinds and invalid state transitions are rejected;
+- malformed, truncated, and oversized inputs are tested and fuzzed.
+
+The IPC format is local implementation plumbing, not a network or client integration protocol.
 
 ### Slow or disconnected attachment
 
-Threat: client backpressure blocks PTY draining and freezes the shell.
+Threat: client backpressure prevents the runner from draining the PTY and freezes the shell.
 
 Controls:
 
-- bounded per-attachment queue;
-- PTY draining independent from client writes;
-- disconnect `ClientTooSlow` attachments;
-- bounded replay/snapshot recovery.
+- PTY reads remain enabled independently of attachment writes;
+- per-attachment output queue is byte-bounded;
+- a full queue disconnects the attachment;
+- with no attachment, output is read and discarded;
+- disconnect never stops the child.
 
-### Duplicate input after reconnect
+### In-flight input during disconnect
 
-Threat: uncertain delivery causes a command or keystroke sequence to be sent twice.
+Threat: the user cannot know whether the final bytes before a network failure reached the shell.
 
-Controls:
-
-- stable client ID;
-- monotonic input sequence;
-- runner-side deduplication and acknowledgement;
-- client retries only unacknowledged frames.
-
-This prevents transport-level duplicates but cannot make arbitrary shell activity transactional.
-
-### Output gap or reordering
-
-Threat: client renders live output before its recovered baseline or silently misses bytes.
-
-Controls:
-
-- monotonic output sequence;
-- contiguous acknowledgements;
-- replay only when complete range remains buffered;
-- atomic snapshot baseline sequence;
-- live output strictly after baseline;
-- epoch invalidates stale sequence state.
-
-### Terminal escape-sequence abuse
-
-Threat: malicious child output exploits parser bugs, creates unbounded state, or causes unsafe terminal behavior.
-
-Controls:
-
-- maintained permissively licensed parser;
-- bounds on OSC/DCS/APC and snapshot state;
-- terminal parser fuzzing;
-- raw bytes never used as logs or shell commands;
-- attached terminals receive only protocol-authorized output and snapshots.
-
-Terminal emulators inherently process untrusted escape sequences; parser quality is security-critical.
-
-### Query response duplication
-
-Threat: both runner and attached terminal answer a terminal query, corrupting application input.
-
-Controls:
-
-- negotiated `runner_answers_terminal_queries` capability;
-- runner is authoritative terminal endpoint;
-- clients suppress local query responses in that mode;
-- ordering tests around attach and snapshot.
-
-### Shell injection
-
-Threat: session name, cwd, argv, or protocol value enters a shell command string.
-
-Controls:
-
-- machine SSH command is fixed;
-- create fields arrive through binary framing;
-- child starts through argv APIs;
-- no `sh -c` for user-provided values;
-- cwd validated as a path;
-- bounded argv count and element length.
+Control: AFK makes no exactly-once claim and does not automatically resend input. This is the same uncertainty present in an ordinary interrupted SSH terminal. Avoiding automatic retries prevents AFK from duplicating a command.
 
 ### Wrong-session fallback
 
-Threat: failed attach silently starts a new shell and user executes commands believing the old process resumed.
+Threat: a failed attach starts a new shell and the user mistakes it for the original process.
 
 Controls:
 
-- attach and create are distinct typed operations;
-- no automatic attach-to-create fallback;
-- epoch and process metadata shown after attach;
-- explicit user action required for a replacement session.
+- create and attach are distinct operations;
+- `attach` never creates;
+- an explicit `stream` action is required to start a shell;
+- session ID and safe process metadata are shown to the user.
 
-### Attachment takeover abuse
+### Shell injection
 
-Threat: stale or unrelated client steals control.
+Threat: a session ID or argument enters a shell command string.
 
 Controls:
 
-- one controlling lease;
-- explicit takeover policy;
-- lease generation invalidates old client;
-- same-client reconnect identity used only as a usability signal, not a replacement for Unix/SSH authentication;
-- human CLI requires `--takeover` by default.
+- session IDs accept exactly 32 lowercase hexadecimal characters;
+- shell startup uses argv APIs;
+- no `sh -c` wraps user-provided values;
+- the initial release does not accept arbitrary child commands;
+- no IPC value is interpolated into a command string.
 
 ### Process-group escape
 
-Threat: stop kills unrelated processes or fails to terminate the intended tree.
+Threat: `stop` kills an unrelated process or fails to terminate the intended shell tree.
 
 Controls:
 
-- runner creates and tracks PTY process group;
-- verify group identity before signals;
-- signal group rather than arbitrary PIDs;
-- bounded TERM-to-KILL escalation;
-- integration tests with pipelines and descendants.
+- the runner creates and owns the PTY process group;
+- stop requests go through a verified runner socket;
+- signals target the runner-owned process group;
+- TERM-to-KILL escalation has a fixed timeout;
+- pipelines, descendants, PID reuse, and cleanup are integration-tested.
 
 ### Runner killed with SSH login
 
-Threat: host policy kills detached processes, violating continuity expectations.
+Threat: host policy kills detached processes when the SSH login ends.
 
 Controls:
 
-- detach before attachment;
-- checked `setsid`/daemonization;
-- `doctor` survival probe;
-- detect known login/cgroup policies;
-- report unsupported rather than claim continuity;
-- optional user-service strategy only after separate review.
+- the runner detaches before attachment starts;
+- session and descriptor setup is checked;
+- integration tests kill the launcher and SSH transport;
+- AFK documents that cgroup or administrator policy can override detachment;
+- unsupported hosts are reported rather than hidden behind a false success.
 
-### Malicious release artifact
+### Terminal escape sequences
 
-Threat: installer executes tampered binary.
+Threat: child output contains malicious terminal escape sequences.
 
-Controls:
+Control: AFK treats output as opaque bytes and does not parse or persist it. The user's terminal emulator already receives untrusted remote output during ordinary SSH. AFK does not add a terminal parser to the attack surface.
 
-- HTTPS transport is not sufficient by itself;
-- pinned release manifest and SHA-256;
-- signed provenance/attestation;
-- public CI builds;
-- SBOM and license inventory;
-- atomic activation and rollback;
-- machine-readable self-check before use.
+### Sensitive diagnostics
 
-### Sensitive logs
-
-Threat: terminal input/output or environment secrets enter diagnostics.
+Threat: terminal bytes, input, arguments, environment values, or credentials enter logs or metadata.
 
 Controls:
 
 - no telemetry;
-- no terminal bytes in logs;
-- stable metadata-only errors;
-- bounded owner-only local diagnostics;
-- tests with sentinel secrets;
-- review all debug formatting for protocol payloads.
+- no terminal recording;
+- no terminal bytes in diagnostics;
+- bounded static or metadata-only errors;
+- owner-only metadata;
+- sentinel tests verify sensitive values are not emitted;
+- IPC and PTY payload types do not derive unrestricted debug output.
+
+### Malicious release artifact
+
+Threat: an installer executes a modified or incorrectly linked binary.
+
+Controls before release:
+
+- checksums and signed provenance;
+- public CI builds;
+- SBOM and license inventory;
+- `PT_INTERP` and `DT_NEEDED` inspection for musl artifacts;
+- clean-image execution tests;
+- atomic installation.
 
 ## Resource limits
 
-All limits are part of the security contract and must have tests:
+The initial implementation defines and tests at least:
 
-- frame payload;
-- aggregate snapshot;
-- replay bytes and chunk count;
-- attachment queue;
-- number of remembered client input sequences;
-- session name, path, argv count, and argv element length;
-- terminal rows, columns, scrollback, title, OSC/DCS payload;
-- completed-session retention;
-- stop grace period;
-- metadata and diagnostic file size.
+- IPC payload: 64 KiB;
+- attachment output queue: 1 MiB;
+- session ID: 16 bytes encoded as 32 lowercase hexadecimal characters;
+- metadata file: 64 KiB;
+- terminal rows and columns: 1 through 4096;
+- Unix socket path: checked against the platform limit;
+- sessions returned by one listing: 1024;
+- stop grace period: five seconds;
+- PTY bytes processed per event-loop tick: 256 KiB.
+
+There is no replay buffer, scrollback buffer, terminal snapshot, or completed-session retention in the initial design.
 
 ## Unsafe code
 
-Unsafe Rust is denied by default. Any exception requires:
+Unsafe Rust is denied by default. A required exception must have:
 
-- a dedicated module;
+- a dedicated Linux platform module;
 - documented preconditions and invariants;
-- explanation of why a safe crate/API is insufficient;
-- platform-specific tests;
-- independent review;
-- fuzz or sanitizer coverage where applicable.
+- an explanation of why a safe API is insufficient;
+- no IPC parsing or runner state in the unsafe block;
+- focused platform tests;
+- independent review and sanitizer coverage where applicable.
 
-PTY/process operations may require low-level Unix APIs, but that does not justify broad unsafe scope.
+Low-level PTY operations do not justify unsafe code elsewhere.
 
 ## Security review gates
 
-Before a prerelease:
+Before the process-survival implementation is accepted:
 
-- frame decoder fuzz target runs in CI or scheduled CI;
-- runtime path race/symlink tests exist;
-- SSH disconnect E2E proves shell survival;
-- slow-client test proves bounded memory and live shell;
-- sentinel-secret tests cover logs and metadata;
-- dependency audit and license check pass;
-- terminal parser choice receives explicit security review;
-- release checksums and provenance are verifiable.
+- runtime symlink and ownership tests pass;
+- malformed IPC tests cover every record kind;
+- launcher termination leaves the runner and shell alive;
+- detached high output does not block the child;
+- stop is constrained to the intended process group;
+- sentinel values do not appear in diagnostics or metadata;
+- dependency, advisory, and license checks pass.
 
-Before protocol stability:
+Before a public release:
 
-- protocol specification is complete;
-- compatibility and downgrade behavior are tested;
-- independent reviewer signs off on state machine and limits;
-- threat model is reconciled against implementation.
+- abrupt OpenSSH TCP loss is tested end to end;
+- both musl artifacts have no dynamic dependencies;
+- clean-image execution succeeds;
+- release checksums and provenance are verifiable;
+- the threat model is reconciled with the implementation.
 
 ## Reporting
 

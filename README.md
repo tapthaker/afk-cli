@@ -20,7 +20,7 @@ AFK CLI is in early implementation after architecture and security review. It is
 
 The repository produces a self-contained executable named **`afk`**. It will not require a hosted service, open a network port, or run a machine-wide daemon. Once session lifecycle is implemented, one user-owned runner process will exist for each persistent terminal session.
 
-AFK CLI is client-agnostic. Its human CLI and public wire protocol are intended to be complete integration surfaces; no particular SSH client or unpublished integration behavior is required.
+AFK CLI works through ordinary SSH PTY channels and does not depend on a particular SSH client or private integration.
 
 The initial Rust executable currently provides side-effect-free help and version paths:
 
@@ -34,12 +34,10 @@ Session lifecycle is not implemented yet.
 ## Planned commands
 
 ```bash
-afk stream [--detach] [--name NAME] [--cwd PATH] [-- COMMAND...]
-afk attach SESSION [--takeover]
-afk detach SESSION
+afk stream [--id SESSION_ID] [--detach]
+afk attach SESSION_ID
 afk sessions [--json]
-afk stop SESSION
-afk doctor [--json]
+afk stop SESSION_ID
 ```
 
 ## Documentation
@@ -51,15 +49,14 @@ afk doctor [--json]
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 
-A standalone wire-protocol specification will be added before implementation is considered stable.
-
 ## Core constraints
 
 - SSH remains responsible for host verification, user authentication, encryption, and integrity.
 - AFK exposes no TCP or UDP listener.
-- Terminal input and output are not stored on disk by default.
+- Terminal input and output are never stored on disk by AFK.
 - The PTY is always drained so a disconnected client cannot block the shell.
-- Replay, snapshots, queues, and protocol frames are bounded.
+- Output produced while detached is discarded rather than replayed.
+- Local IPC records and attachment queues are bounded.
 - Reattachment never silently creates a replacement shell.
 - No telemetry, hosted AFK dependency, or dependency on a particular SSH client.
 

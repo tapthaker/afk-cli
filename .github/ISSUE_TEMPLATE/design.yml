@@ -1,5 +1,5 @@
 name: Design proposal
-description: Propose a CLI, protocol, lifecycle, terminal, security, or release change
+description: Propose a CLI, IPC, process-lifecycle, security, or release change
 title: "design: "
 labels: [design]
 body:
@@ -28,7 +28,7 @@ body:
     id: compatibility
     attributes:
       label: Compatibility
-      description: Explain wire, CLI, runtime-file, snapshot, and rolling-upgrade effects.
+      description: Explain CLI, local-IPC, runtime-file, and live-session effects.
     validations:
       required: true
   - type: textarea

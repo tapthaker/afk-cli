@@ -4,7 +4,7 @@
 
 ## Risk and invariants
 
-<!-- Protocol, process lifecycle, terminal state, security, privacy, and resource limits. -->
+<!-- Local IPC, process lifecycle, terminal handling, security, privacy, and resource limits. -->
 
 ## Validation
 
@@ -12,7 +12,7 @@
 
 ## Compatibility
 
-<!-- Wire, CLI, runtime files, snapshots, and rolling upgrades. Write “not applicable” with a reason if none. -->
+<!-- CLI, local IPC, runtime files, and live sessions. Write “not applicable” with a reason if none. -->
 
 ## Documentation
 

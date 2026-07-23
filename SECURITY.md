@@ -33,12 +33,11 @@ These are goals, not guarantees.
 
 Security-sensitive areas include:
 
-- framed protocol decoding;
+- bounded local IPC decoding;
 - runtime path and Unix socket handling;
 - PTY/process-group lifecycle;
-- detach/reattach ordering;
-- input deduplication and output replay;
-- terminal parsing and snapshot generation;
+- detach/reattach ordering and output draining;
+- terminal-mode restoration and resize forwarding;
 - artifact installation, verification, and rollback;
 - sensitive-data logging.
 

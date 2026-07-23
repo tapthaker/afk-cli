@@ -1,113 +1,96 @@
 # Acceptance Tests
 
-Acceptance tests exercise AFK CLI at process, protocol, SSH, and release-artifact boundaries. Unit tests remain responsible for individual parsers and state transitions.
+Acceptance tests prove AFK's narrow promise: the same remote shell remains alive across SSH attachment loss and can be reached again.
 
-The initial Rust package includes executable CLI-001 and CLI-002 integration tests alongside the artifact dependency checker and its self-tests. Further product tests are added with the implementation slice that makes each criterion meaningful; they must not be committed as skipped placeholders.
+The current package implements CLI-001 and CLI-002 plus the release-artifact dependency checker. Product tests are added with the implementation slice that makes each criterion meaningful; skipped placeholders are not accepted.
 
-## Test harness rules
+## Harness rules
 
-- Give every test an isolated temporary `HOME` and AFK runtime root.
-- Use synthetic commands and sentinel values; never capture real terminal data or credentials.
-- Apply explicit per-operation and whole-test timeouts.
-- Track every spawned PID and remove every runtime path during teardown, including failed tests.
-- Treat abrupt descriptor close and killed transport as normal test inputs.
-- Assert bounded outcomes rather than relying on sleeps alone.
-- Keep protocol clients in the fixture independent from production client code.
-- Do not print PTY bytes when a test fails; report sequence numbers, lengths, and stable states only.
+- Give every test an isolated temporary `HOME` and runtime root.
+- Use synthetic commands, paths, and sentinel values.
+- Apply explicit operation and whole-test timeouts.
+- Track and clean up every spawned PID and runtime path.
+- Treat abrupt descriptor close and killed transport as normal inputs.
+- Do not print PTY or IPC payloads on failure.
+- Assert PIDs, states, lengths, and exit reasons instead.
 
-Shared Rust fixture code will live under `tests/support/`. Linux-only tests should report an explicit unsupported platform rather than silently passing.
+## Acceptance criteria
 
-## Acceptance matrix
+### CLI
 
-### CLI and startup
+| ID | Criterion | First step |
+| --- | --- | --- |
+| CLI-001 | `afk --version` succeeds without creating runtime files. | Step 0 |
+| CLI-002 | Invalid arguments return exit code 2 and bounded stderr without echoing the argument. | Step 0 |
+| CLI-003 | `stream`, `attach`, `sessions`, and `stop` reject malformed or missing session IDs. | Step 1A/3 |
+| CLI-004 | A failed `attach` never creates a shell or runtime entry. | Step 2B |
 
-| ID | Criterion | Layer | First required step |
-| --- | --- | --- | --- |
-| CLI-001 | `afk --version` exits successfully without creating runtime files. | Cargo integration | Step 0 |
-| CLI-002 | Invalid arguments return a documented nonzero exit code and bounded stderr. | Cargo integration | Step 0 |
-| START-001 | The launcher reports success only after the runner socket, PTY, and child are ready. | Linux process integration | Step 2 |
-| START-002 | A startup failure returns a typed error and leaves no live runner or stale socket. | Linux process integration | Step 2 |
-| START-003 | Retrying an uncertain create with the same session ID reaches one shell, not two. | Linux process integration | Step 3 |
+### Local IPC and runtime files
 
-### Process continuity and lifecycle
+| ID | Criterion | First step |
+| --- | --- | --- |
+| IPC-001 | Every internal record kind round-trips through the bounded codec. | Step 1A |
+| IPC-002 | Every truncated header and payload is rejected. | Step 1A |
+| IPC-003 | Payload lengths above 64 KiB are rejected before allocation. | Step 1A |
+| IPC-004 | Unknown kinds, wrong fixed payload lengths, and invalid state transitions are rejected. | Step 1A |
+| FS-001 | Runtime root and session files have expected ownership and restrictive modes. | Step 1B |
+| FS-002 | Symlinked root, lock, metadata, and socket entries are rejected without modifying their targets. | Step 1B |
+| FS-003 | Concurrent create requests for one ID produce one runner. | Step 1B/2A |
+| FS-004 | A stale PID cannot authorize cleanup or signaling. | Step 1B/3 |
+| FS-005 | Metadata stays within its limit and excludes terminal, argument, and environment contents. | Step 1B/3 |
 
-| ID | Criterion | Layer | First required step |
-| --- | --- | --- | --- |
-| PROC-001 | Closing the launcher and attachment descriptors does not change the shell PID, cwd, or nonce. | Linux process integration | Step 2 |
-| PROC-002 | Continuous PTY output while detached does not block the child. | Linux process integration | Step 2 |
-| PROC-003 | A full attachment queue detaches the slow client while the child keeps producing output. | Linux process integration | Step 3 |
-| PROC-004 | `detach` keeps the process group alive; `stop` terminates it after bounded TERM/KILL handling. | Linux process integration | Step 3 |
-| PROC-005 | Stop handles pipelines and descendants without signaling an unrelated process group. | Linux process integration | Step 3 |
-| PROC-006 | Completed retention expires and removes socket, lock, and metadata without persisting terminal bytes. | Linux process integration | Step 3 |
+### Process continuity
 
-### Runtime filesystem
-
-| ID | Criterion | Layer | First required step |
-| --- | --- | --- | --- |
-| FS-001 | Runtime root and per-session files have expected ownership and restrictive modes. | Linux filesystem integration | Step 1 |
-| FS-002 | Symlinked roots, metadata, locks, and sockets are rejected without modifying their targets. | Linux filesystem integration | Step 1 |
-| FS-003 | A stale PID alone cannot authorize cleanup or signaling. | Linux filesystem/process integration | Step 3 |
-| FS-004 | Concurrent create requests for one ID produce exactly one runner. | Linux process integration | Step 3 |
-| FS-005 | Metadata remains within its byte limit and excludes input, output, argv, and environment values. | Linux filesystem integration | Step 3 |
-
-### Protocol and reconnect
-
-| ID | Criterion | Layer | First required step |
-| --- | --- | --- | --- |
-| WIRE-001 | An independent fixture negotiates every supported protocol overlap and rejects no-overlap. | Protocol integration | Step 4 |
-| WIRE-002 | Truncated, oversized, overflowing, and invalid-state frames close safely with bounded allocation. | Protocol integration/fuzz | Step 1 |
-| WIRE-003 | Reconnect replays each retained output sequence once and in order before live output. | Protocol/process integration | Step 4 |
-| WIRE-004 | A replay gap or epoch mismatch selects a snapshot rather than incomplete replay. | Protocol/terminal integration | Step 5 |
-| WIRE-005 | Retried unacknowledged input is written to the PTY once; duplicate sequence numbers are only acknowledged. | Protocol/process integration | Step 4 |
-| WIRE-006 | Takeover increments lease generation and prevents the replaced attachment from sending input. | Protocol/process integration | Step 3 |
-| WIRE-007 | Machine stdout contains frames only, and malformed input cannot inject diagnostics into stdout. | Bridge integration | Step 4 |
-
-### Terminal recovery
-
-| ID | Criterion | Layer | First required step |
-| --- | --- | --- | --- |
-| TERM-001 | Cold attach restores a usable primary-screen baseline before live output. | Terminal integration | Step 5 |
-| TERM-002 | Alternate-screen applications recover cursor, attributes, modes, and screen contents within configured bounds. | Terminal integration | Step 5 |
-| TERM-003 | Resize establishes one ordered snapshot baseline and does not lose subsequent PTY output. | Terminal integration | Step 5 |
-| TERM-004 | Runner-generated query replies continue while detached and are not duplicated after attach. | Terminal/process integration | Step 5 |
-| TERM-005 | Malformed or oversized escape strings cannot exceed parser, title, scrollback, or snapshot limits. | Terminal integration/fuzz | Step 5 |
+| ID | Criterion | First step |
+| --- | --- | --- |
+| PROC-001 | Launcher exit leaves the runner, PTY, and shell alive. | Step 2A |
+| PROC-002 | Closing an attachment does not change the shell PID or cwd. | Step 2B |
+| PROC-003 | Continuous output while detached does not block the child. | Step 2A |
+| PROC-004 | Reattach reaches the same shell PID and synthetic shell variable. | Step 2B |
+| PROC-005 | Terminal resize reaches the runner-owned PTY. | Step 2B |
+| PROC-006 | A 1 MiB full output queue drops the slow attachment while the child continues. | Step 2B |
+| PROC-007 | A new attachment replaces a stale attachment and becomes the only input owner. | Step 2B |
+| PROC-008 | `stop` terminates the intended process group and not an unrelated process. | Step 3 |
+| PROC-009 | Shell exit removes socket, lock, and metadata. | Step 3 |
 
 ### OpenSSH disconnect
 
-| ID | Criterion | Layer | First required step |
-| --- | --- | --- | --- |
-| SSH-001 | Destroying TCP without a graceful channel close leaves the runner and shell alive. | Containerized OpenSSH E2E | Step 4 |
-| SSH-002 | A new TCP connection attaches to the same session ID and epoch, PID, cwd, and nonce. | Containerized OpenSSH E2E | Step 4 |
-| SSH-003 | TCP destruction during high output, resize, and alternate-screen activity remains recoverable. | Containerized OpenSSH E2E | Step 5 |
-| SSH-004 | A host policy that kills login processes is detected and reported rather than treated as continuity. | Container/system policy E2E | Step 6 |
+| ID | Criterion | First step |
+| --- | --- | --- |
+| SSH-001 | Destroying TCP without a graceful channel close leaves the runner and shell alive. | Step 4 |
+| SSH-002 | A new SSH PTY channel attaches to the same session and shell PID. | Step 4 |
+| SSH-003 | Shell cwd and a synthetic variable survive the disconnect. | Step 4 |
+| SSH-004 | Detached high output does not freeze the shell before reconnect. | Step 4 |
+| SSH-005 | `stop` over a later SSH connection terminates the session and cleans runtime files. | Step 4 |
 
-### Release artifacts and dynamic-library dependencies
+AFK does not promise replay of output produced while detached. Tests must not expect screen reconstruction, output sequence acknowledgements, or exactly-once input delivery.
 
-| ID | Criterion | Layer | First required step |
-| --- | --- | --- | --- |
-| ART-001 | The final x86-64 artifact is an ELF file for the expected architecture. | Artifact acceptance | Step 0 |
-| ART-002 | The final AArch64 artifact is an ELF file for the expected architecture. | Artifact acceptance | Step 0 |
-| ART-003 | Each Linux musl artifact has no `PT_INTERP` program header and no `DT_NEEDED` entries. | Artifact acceptance | Step 0/6 |
-| ART-004 | Dynamic dependency inventory is emitted in machine-readable form, including an empty `needed` list for static artifacts. | Artifact acceptance | Step 0 |
-| ART-005 | The unpacked and compressed executable remain within documented size budgets. | Artifact acceptance | Step 0 onward |
-| ART-006 | A clean minimal image can execute the artifact without installing runtime libraries. | Container/native execution | Step 0/6 |
-| ART-007 | The release artifact passes version/protocol self-check and matches its manifest checksum. | Artifact acceptance | Step 6 |
-| ART-008 | SBOM and license inventory correspond to the locked source dependency graph. | Release acceptance | Step 6 |
+### Release artifacts
 
-For Linux musl, “static” means no dynamic loader and no dynamically loaded dependencies, including system libraries. `cargo tree` and an SBOM describe source dependencies but do not prove what the linker placed in the executable.
+| ID | Criterion | First step |
+| --- | --- | --- |
+| ART-001 | The x86-64 artifact is an ELF file for the expected architecture. | Step 0 |
+| ART-002 | The AArch64 artifact is an ELF file for the expected architecture. | Step 0 |
+| ART-003 | Both musl artifacts have no `PT_INTERP` header and no `DT_NEEDED` entries. | Step 0 |
+| ART-004 | Dependency inspection emits machine-readable output with an empty `needed` list. | Step 0 |
+| ART-005 | Compressed artifacts remain below 15 MiB. | Step 0 onward |
+| ART-006 | Clean target environments execute each artifact without installed runtime libraries. | Step 4 |
+| ART-007 | Dependency advisories, licenses, bans, and sources pass policy. | Step 0 onward |
 
-`check_static_elf.py` uses `readelf` program and dynamic headers instead of `ldd`. This works for cross-architecture artifacts, avoids depending on a target loader, and provides the exact interpreter and `DT_NEEDED` inventory on failure.
+For Linux musl, static means no dynamic loader and no dynamically loaded system or third-party libraries. A Cargo dependency tree does not prove what the linker placed in the executable.
 
-Run the checker self-tests:
+`check_static_elf.py` inspects ELF program and dynamic headers with `readelf`. It works for cross-architecture artifacts and reports the interpreter and shared libraries on failure.
+
+Run its self-tests:
 
 ```bash
 python3 -m unittest discover -s tests/acceptance -p 'test_*.py'
 ```
 
-Inspect a built artifact:
+Inspect built artifacts:
 
 ```bash
-python3 tests/acceptance/check_static_elf.py \
+python3 tests/acceptance/check_static_elf.py --json \
   target/x86_64-unknown-linux-musl/release/afk
 
 python3 tests/acceptance/check_static_elf.py --json \
@@ -116,30 +99,27 @@ python3 tests/acceptance/check_static_elf.py --json \
 
 Set `READELF=llvm-readelf` or pass `--readelf` when GNU `readelf` is unavailable.
 
-The checker has negative fixtures for both `PT_INTERP` and multiple `DT_NEEDED` entries. CI must run those self-tests before trusting the artifact result.
-
 ## Execution tiers
 
 ### Pull requests
 
-- Rust unit and Cargo integration tests;
-- artifact-checker self-tests;
-- x86-64 and AArch64 musl builds and ART-001 through ART-005;
-- relevant malformed-input and disconnect tests for changed boundaries.
+- formatting, Clippy, Rust unit and integration tests;
+- acceptance-checker self-tests;
+- Cargo Deny;
+- both musl builds, architecture checks, dynamic-dependency checks, and size budgets;
+- malformed-input and disconnect tests for changed boundaries.
 
 ### Scheduled
 
-- fuzz targets;
-- high-output and slow-client stress cases;
+- IPC fuzzing;
+- high-output and slow-client stress;
 - OpenSSH abrupt-TCP tests;
-- terminal conformance suite;
 - sanitizer runs for any reviewed unsafe module.
 
 ### Release
 
-- all acceptance IDs required by the implemented phase;
-- x86-64 and AArch64 static dependency inspection;
-- native or emulated execution in clean minimal images;
+- every implemented acceptance criterion;
+- clean execution of x86-64 and AArch64 artifacts;
 - artifact size, RSS, startup, SBOM, checksum, provenance, install, and rollback checks.
 
-Every failed acceptance test must retain bounded lifecycle diagnostics without retaining terminal input or output.
+Every failed test retains only bounded lifecycle diagnostics and never terminal input or output.

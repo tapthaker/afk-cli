@@ -10,6 +10,7 @@ AFK CLI persists one user-owned PTY process across SSH disconnections.
 - Repository and Cargo package name: `afk-cli`
 - No hosted backend or account
 - No dependency on a particular SSH client or private integration
+- No public wire protocol or terminal emulation
 - No TCP/UDP listener
 - No machine-wide daemon
 - No telemetry
@@ -19,12 +20,12 @@ AFK CLI persists one user-owned PTY process across SSH disconnections.
 ## Engineering rules
 
 1. Read `docs/ARCHITECTURE.md` and `docs/THREAT_MODEL.md` before implementation.
-2. Keep protocol and terminal resources explicitly bounded.
+2. Keep local IPC, queues, paths, and terminal dimensions explicitly bounded.
 3. Never log terminal bytes, input, environment values, or credentials.
-4. Do not interpolate protocol values into shell commands.
+4. Do not interpolate session IDs or IPC values into shell commands.
 5. Deny unsafe Rust by default; exceptions require documented invariants and review.
 6. Keep dependencies permissively licensed and justify their size/attack surface.
-7. Add malformed-input and disconnect-path tests with every protocol change.
+7. Add malformed-input and disconnect-path tests with every IPC or lifecycle change.
 8. Update public documentation with public behavior.
 9. Stage files explicitly; never use `git add .` or `git add -A`.
 10. Commit completed and validated code or documentation work with a concise message.
@@ -46,4 +47,4 @@ cargo test --workspace --all-targets
 cargo deny check
 ```
 
-Additional protocol, fuzz, OpenSSH E2E, and artifact checks are required where applicable.
+Additional IPC fuzz, OpenSSH E2E, and artifact checks are required where applicable.

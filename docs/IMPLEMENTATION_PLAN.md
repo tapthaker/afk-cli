@@ -2,340 +2,196 @@
 
 **Status:** In progress
 
-This plan turns the requirements in [ARCHITECTURE.md](ARCHITECTURE.md) and [THREAT_MODEL.md](THREAT_MODEL.md) into small, reviewable Rust increments. It does not replace either document or the future wire-protocol specification.
+This plan implements the small process-continuity design in [ARCHITECTURE.md](ARCHITECTURE.md) and [THREAT_MODEL.md](THREAT_MODEL.md).
 
-## 1. Goals
+## 1. Implementation shape
 
-The implementation should be:
-
-- one self-contained `afk` executable;
-- statically linked for `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`;
-- small in binary size, idle memory, dependency count, and operational scope;
-- single-threaded unless measurements demonstrate a need for concurrency;
-- divided along protocol, filesystem, process, terminal, and user-interface trust boundaries;
-- testable without SSH for most behavior, with OpenSSH reserved for end-to-end validation;
-- understandable without private integration code or unpublished context.
-
-Correctness, bounded memory, and process survival take priority over a smaller artifact.
-
-## 2. Initial technical decisions
-
-### One package and one executable
-
-Start with one Cargo package containing a library and a thin binary:
-
-```text
-Cargo.toml
-src/lib.rs
-src/main.rs
-```
-
-`main.rs` only calls the library entry point and maps a typed result to an exit code. Internal modules provide review boundaries without introducing a workspace or multiple internal crates. A module should become a separate crate only when it needs an independently stable API, separate fuzz target, or platform implementation.
-
-### Linux and musl first
-
-The first supported hosts are Linux on x86-64 and AArch64. Linux-specific behavior is isolated behind `platform` so later Unix support does not spread conditional compilation through session logic.
-
-The initial implementation must not depend on glibc, OpenSSL, a shell command wrapper, or a dynamically linked non-system library. Both musl artifacts are built from the same source and lockfile.
-
-### Synchronous event loop
-
-Use one nonblocking event loop per runner for the PTY, Unix listener, active attachment, signals, and timers. Do not introduce Tokio or another async runtime initially.
-
-A single owner of runner state makes ordering explicit for:
-
-- PTY draining;
-- attach and takeover;
-- replay and snapshot baselines;
-- output sequence assignment;
-- input deduplication;
-- resize;
-- child exit and cleanup.
-
-No mutex should be needed in the runner hot path. Blocking filesystem work is limited to bounded startup and cleanup operations.
-
-### Explicit bounded wire codec
-
-Use the architecture's fixed frame header and an explicit binary payload codec. Integers use one documented byte order; byte strings and text have fixed-width lengths; decoders reject trailing fields unless a protocol version permits them.
-
-The codec must:
-
-- inspect and validate frame length before allocation;
-- decode from bounded byte slices;
-- borrow payload bytes where ownership is unnecessary;
-- validate each message against a per-kind limit;
-- reject arithmetic overflow, truncation, unknown required flags, and trailing data;
-- contain no filesystem, PTY, logging, or command-execution behavior.
-
-Do not use a general-purpose deserializer for wire messages in the first version. The format and golden vectors will be published in `docs/PROTOCOL.md` before compatibility is promised.
-
-### Minimal dependency policy
-
-Prefer the standard library. Initial dependency candidates are:
-
-| Need | Candidate | Constraint |
-| --- | --- | --- |
-| Unix syscalls and types | `rustix` | Enable only required features; verify PTY and process APIs in the survival spike. |
-| OS randomness | `getrandom` | Generate IDs directly; do not pull in a general RNG stack. |
-| CLI parsing | `lexopt` | Keep parsing based on `OsString`; no shell interpolation. |
-| Bounded metadata JSON | `serde` and `serde_json` | Registry files and `--json` only, never the wire protocol; read size is capped before parsing. |
-| Terminal state | `vt100` or another reviewed engine | Deferred until the terminal-recovery phase and accepted only after conformance, license, size, and query-handling review. |
-
-This is a candidate set, not permission to add all dependencies during scaffolding. Each dependency is introduced in the change that needs it with license, maintenance, transitive tree, binary-size, and attack-surface evidence.
-
-Avoid `anyhow`, a general logging framework, an async runtime, and a TLS stack initially. Typed project errors and narrow diagnostics are preferable. This can be revisited with measurements and a design note.
-
-### Panic and unsafe policy
-
-Keep unwinding enabled initially so RAII guards can restore a human terminal after failure. Do not select `panic = "abort"` only to reduce binary size.
-
-Use `#![deny(unsafe_code)]` at the crate boundary. If a required Linux PTY or process operation has no adequate safe API, place the smallest possible exception in a dedicated `platform::linux` module with:
-
-- a module-level `allow(unsafe_code)`;
-- documented preconditions and invariants for every operation;
-- no protocol parsing or business state in the unsafe module;
-- Linux integration tests and an independent review;
-- sanitizer coverage where applicable.
-
-Prefer owned file-descriptor types and RAII. Never pass an unvalidated raw descriptor across general application code.
-
-## 3. Module boundaries
-
-The starting source tree should grow toward this shape. Empty placeholder modules should not be created before they carry behavior.
+AFK remains one Cargo package and one executable. The runner and attach process are hidden modes of the same binary.
 
 ```text
 src/
-  main.rs                 thin process entry point
-  lib.rs                  dispatch and public test seam
-  error.rs                typed top-level errors and exit mapping
-  limits.rs               reviewed resource-limit constants and newtypes
-  identity.rs             session/client IDs and epochs
-
-  cli/
-    mod.rs                argv parsing and command model
-    output.rs             human and JSON-safe output
-
-  protocol/
-    mod.rs                public protocol types
-    frame.rs              fixed header and frame limits
-    encode.rs             explicit payload writer
-    decode.rs             bounded payload reader
-    state.rs              legal handshake/stream transitions
-
-  registry/
-    mod.rs                session lookup and lifecycle API
-    path.rs               runtime-root and session-path validation
-    metadata.rs           bounded safe metadata
-
+  main.rs          thin entry point
+  lib.rs           dispatch and test seam
+  cli.rs           argument parsing
+  limits.rs        resource bounds
+  identity.rs      session ID
+  ipc.rs           bounded local records
+  registry.rs      runtime files and lookup
+  runner.rs        persistent PTY owner
+  attach.rs        terminal forwarding
   platform/
-    mod.rs                platform-facing traits/types
-    linux/
-      pty.rs              PTY creation and terminal control
-      process.rs          session/process-group/signal operations
-      poll.rs             nonblocking readiness and timers
-      peer.rs             Unix peer credentials
-
-  session/
-    launcher.rs           checked runner startup and readiness channel
-    runner.rs             event-loop coordinator
-    lifecycle.rs          child exit, stop, retention, and cleanup
-    lease.rs              one-controller attachment policy
-    replay.rs             byte-bounded output sequence ring
-    input.rs              bounded input deduplication state
-
-  attach/
-    human.rs              local raw-terminal adapter and detach escape
-    bridge.rs             machine stdio adapter
-
-  terminal/
-    mod.rs                bounded terminal-engine interface
-    snapshot.rs           versioned ANSI snapshot generation
+    linux.rs       PTY, process, peer, and polling operations
 ```
 
-### Dependency direction
+Modules are added only when they carry behavior. Do not split the package into internal crates unless a real independent API appears.
 
-Dependencies point inward toward small, pure modules:
+## 2. Technical choices
+
+### Linux musl first
+
+Initial targets are:
 
 ```text
-main -> cli -> session/attach
-session -> protocol + registry + terminal + platform
-attach  -> protocol + platform
-registry -> identity + limits + platform
-protocol -> identity + limits
-terminal -> limits
-platform -> standard library / reviewed syscall crate
+x86_64-unknown-linux-musl
+aarch64-unknown-linux-musl
 ```
 
-Additional rules:
+Both artifacts are static. Linux-specific operations stay under `platform` so they do not leak into CLI, IPC, or registry code.
 
-- `protocol` does not perform I/O or know about CLI commands.
-- `platform` does not know protocol message types.
-- `registry` never stores terminal bytes, input, environment values, or credentials.
-- `cli` does not directly manipulate PTYs, sockets, or runtime files.
-- `runner` is the only module that coordinates ordering across PTY, lease, replay, input, and terminal state.
-- resource limits live in `limits` and are enforced again at trust-boundary entry points;
-- important scalar values use newtypes rather than interchangeable integers or strings.
+### One synchronous runner loop
 
-## 4. Process and I/O plan
+The runner is single-threaded and nonblocking. One state owner coordinates:
 
-### Checked runner startup
+- PTY reads and writes;
+- listener accept;
+- the active attachment;
+- resize;
+- output queue limits;
+- child exit and stop.
 
-1. The launcher generates the session ID and creates a private Unix startup socket pair.
-2. It starts the current executable in the hidden runner mode with one end of that socket as a known inherited standard descriptor and all other standard streams detached from SSH.
-3. The runner validates the startup descriptor, creates a new Unix session, resets inherited state, applies umask `077`, and closes unrelated descriptors.
-4. It validates the runtime root, takes the exclusive session lock, binds the owner-only control socket, creates the PTY, and starts the child by argv.
-5. It atomically writes safe metadata and reports either `Ready` or a bounded typed error over the startup socket.
-6. The launcher reports success only after `Ready`; an uncertain create can be retried with the same session ID.
+No async runtime or mutex is needed initially.
 
-The process-survival spike must prove the exact PTY, controlling-terminal, process-group, descriptor-inheritance, and `setsid` sequence. Those details must not be inferred from `nohup` behavior.
+### Minimal local IPC
 
-### Runner loop
+The owner-only Unix stream uses records with a five-byte header:
 
-Each loop iteration follows a fixed priority policy that is covered by state-machine tests:
-
-1. read PTY output first, up to a per-tick work budget, and remain nonblocking while more output is ready;
-2. process child/signal lifecycle events;
-3. accept and negotiate bounded attachment work;
-4. process bounded input, acknowledgement, and resize frames;
-5. flush bounded client output;
-6. process timers and cleanup;
-7. block for readiness only when no immediate work remains.
-
-Per-tick work limits prevent a continuously readable PTY or client from starving lifecycle events. A full client queue detaches that client and never disables PTY reads.
-
-### Human and machine adapters
-
-Human attachment and `ssh-bridge` are adapters over the same runner protocol.
-
-- The human adapter owns a terminal-mode RAII guard, stdin/stdout, resize signals, and `~.` handling.
-- The machine bridge owns framed stdin/stdout and emits no non-protocol stdout.
-- Neither adapter owns session lifecycle state.
-- Disconnecting either adapter drops only its lease and transport resources.
-
-## 5. Build profile and size controls
-
-Begin with a release profile that improves size without changing panic behavior:
-
-```toml
-[profile.release]
-lto = "thin"
-codegen-units = 1
-strip = "symbols"
+```text
+kind: u8
+payload_len: u32, big-endian
 ```
 
-Choose `opt-level = "s"`, fat LTO, or other tuning only after comparing startup time, throughput, and artifact size. Keep debug symbols in a separate release artifact if stripping is enabled.
+Payloads are capped at 64 KiB before allocation. The format carries only attach, input, output, resize, stop, exit, and bounded error messages.
 
-CI verifies each release candidate with equivalent checks to:
+This is not a public protocol. It carries only live terminal and lifecycle events.
 
-```bash
-cargo build --release --locked --target x86_64-unknown-linux-musl
-cargo build --release --locked --target aarch64-unknown-linux-musl
-file target/x86_64-unknown-linux-musl/release/afk
-python3 tests/acceptance/check_static_elf.py --json \
-  target/x86_64-unknown-linux-musl/release/afk
-python3 tests/acceptance/check_static_elf.py --json \
-  target/aarch64-unknown-linux-musl/release/afk
-```
+### Minimal dependencies
 
-The checker fails if a musl artifact contains a `PT_INTERP` segment or any `DT_NEEDED` dynamic-library entry. Every dependency change records compressed binary-size and idle-RSS deltas. Size budgets are measured in CI rather than enforced by intuition.
+Use the standard library where it remains clear. Expected dependencies are:
 
-## 6. Review-sized implementation sequence
+| Need | Candidate | Rule |
+| --- | --- | --- |
+| OS randomness | `getrandom` | Session IDs only. |
+| Unix and PTY operations | `rustix` | Enable only required features. |
+| CLI parsing | `lexopt` | Add only if the current parser becomes unclear. |
+| Metadata JSON | `serde`, `serde_json` | Cap file size before parsing; never serialize terminal data. |
 
-The executable criteria and delivery tiers are tracked in the [acceptance test catalog](../tests/acceptance/README.md).
+Do not add Tokio, TLS, terminal emulation, a general wire serializer, or a general logging framework.
 
-Every step ends in a working, tested repository. Protocol and process-lifecycle changes include malformed-input and disconnect-path tests in the same change.
+### Unsafe and panic behavior
 
-### Step 0: decisions and scaffolding
+Keep unwinding enabled so terminal-mode guards can restore the invoking terminal. Unsafe Rust remains denied. If a safe PTY API is insufficient, isolate the minimum exception under `platform::linux` with documented invariants and dedicated tests.
 
-- Add Cargo package, thin `main.rs`, `lib.rs`, lint policy, and release profile.
-- Pin a Rust toolchain and document the initial MSRV policy.
-- Add formatting, clippy, tests, `cargo deny`, and x86-64 musl CI.
-- Record ADRs for the event loop, wire encoding, runtime path, and runner startup strategy.
-- Add an `afk --version` smoke path without starting a session.
+## 3. Process startup
 
-Exit gate: clean checkout produces a static x86-64 musl executable and dependency/license inventory.
+1. `afk stream` chooses or validates a 128-bit session ID.
+2. The launcher creates a private startup socket pair.
+3. It starts the current executable in hidden runner mode with that descriptor and detached standard streams.
+4. The runner calls checked session/process setup, creates owner-only runtime files, binds its Unix socket, creates a PTY, and starts the login shell.
+5. The runner reports `Ready` or a typed error.
+6. The launcher either exits for `--detach` or becomes an attachment.
 
-### Step 1: bounded foundations
+The survival test must establish the exact `setsid`, controlling-terminal, process-group, and descriptor sequence. Do not rely on `nohup` behavior.
 
-- Add limits and validated newtypes for IDs, dimensions, names, paths, and sequence numbers.
-- Implement fixed frame header and the minimum startup/handshake messages.
-- Add golden vectors, round trips, truncation/overflow tests, and decoder fuzz target.
-- Implement bounded metadata and runtime-path validation with ownership, mode, and symlink tests.
+## 4. Runner behavior
 
-Exit gate: pure protocol and registry tests pass without creating a PTY.
+Each event-loop cycle performs bounded work:
 
-### Step 2: process-survival vertical slice
+1. read available PTY output first;
+2. process child exit and stop state;
+3. accept an attachment and replace any older one;
+4. process bounded input and resize records;
+5. flush the bounded output queue;
+6. block only when no immediate work remains.
 
-- Implement checked launcher/runner startup.
-- Create PTY and login shell, bind an owner-only Unix socket, and forward bounded raw bytes.
-- Keep draining PTY output after the launcher and attachment disappear.
-- Implement minimal cleanup and a test-only inspection path.
-- Measure ready time, idle RSS, and binary size.
+When detached, PTY output is read and discarded. When the active queue reaches 1 MiB, the attachment is dropped and PTY draining continues.
 
-Exit gate: killing the launcher and transport leaves the same shell PID and cwd alive; reconnect reaches that shell.
+No terminal state is reconstructed. Reattach begins with output produced after the new connection and an applied resize.
 
-### Step 3: hardened human lifecycle
+## 5. Review-sized steps
 
-- Implement `stream`, `attach`, `detach`, `sessions`, `stop`, and the first `doctor` probes.
-- Add raw-terminal restoration, resize, detach escape, active lease, takeover, and process-group stop.
-- Complete registry stale-entry and PID-reuse defenses.
-- Test high output, slow clients, signals, pipelines, child trees, and abrupt disconnects.
+### Step 0: scaffold — complete
 
-Exit gate: repeated local detach/attach and deliberate stop are deterministic and bounded.
+- Cargo package and `afk` binary;
+- Rust and Clippy lint policy;
+- `--help` and `--version`;
+- unit and CLI acceptance tests;
+- Cargo Deny and pinned CI actions;
+- static x86-64 and AArch64 musl builds.
 
-### Step 4: public machine protocol
+### Step 1A: limits, identity, and IPC
 
-- Publish `docs/PROTOCOL.md` with limits, state diagrams, errors, and golden vectors.
-- Implement `ssh-bridge` negotiation and machine-only output rules.
-- Add protocol compatibility fixtures independent of any particular client.
-- Add input sequence acknowledgement/deduplication and output replay.
-- Add OpenSSH E2E that destroys TCP without graceful channel close.
+- Add constants for record, queue, metadata, dimensions, and path bounds.
+- Add `SessionId([u8; 16])` generation, lowercase hexadecimal display, and strict parsing.
+- Add the five-byte IPC header and record-kind validation.
+- Add round-trip, every-truncation, oversized-length, unknown-kind, and trailing-data tests.
 
-Exit gate: an independent fixture can create, disconnect, reconnect, and resume through the published protocol.
+Exit: malformed IPC cannot allocate above its limit or enter runner state.
 
-### Step 5: terminal recovery
+### Step 1B: runtime registry
 
-- Evaluate and record the terminal-engine decision.
-- Add bounded terminal parsing, query responses, replay-gap detection, and ANSI snapshot fallback.
-- Add alternate-screen, resize, malformed-escape, and query-duplication tests.
-- Re-measure memory and artifact budgets with configured scrollback.
+- Resolve and validate the home-relative runtime root.
+- Create it with mode 0700 and verify ownership.
+- Add exclusive lock, owner-only socket path, bounded metadata, and atomic replacement.
+- Reject symlinks, overlong socket paths, malformed IDs, and oversized metadata.
+- Verify stale entries through the live socket rather than PID alone.
 
-Exit gate: warm and cold reconnect recover usable shell and full-screen state without blocking the child.
+Exit: concurrent or hostile filesystem entries cannot redirect session control.
 
-### Step 6: release hardening
+### Step 2A: process-survival spike
 
-- Add AArch64 musl execution tests, not only cross-compilation.
-- Add artifact checks, SBOM, provenance, checksums, rollback, and reproducibility notes.
-- Complete hostile host-policy diagnostics and release compatibility tests.
-- Reconcile implementation, protocol specification, architecture, and threat model.
+- Add checked hidden-runner startup and readiness response.
+- Create a PTY and login shell.
+- Bind the owner-only Unix socket.
+- Drain PTY output with no attachment.
+- Add a test-only lifecycle observation that never exposes terminal bytes.
 
-Exit gate: the public prerelease meets the architecture's security, continuity, and artifact requirements.
+Exit: killing the launcher leaves the runner, PTY, shell PID, and cwd alive.
 
-## 7. Review discipline
+### Step 2B: stream and attach
 
-Keep changes independently reviewable:
+- Implement raw terminal mode with RAII restoration.
+- Forward bounded input and output records.
+- Forward initial dimensions and resize events.
+- Replace an older attachment when a new one connects.
+- Treat socket close and SSH loss as detach.
 
-- introduce a dependency separately from unrelated behavior;
-- keep protocol schema changes separate from runner-state changes where possible;
-- include tests beside the invariant they establish;
-- avoid generated code in protocol and lifecycle modules;
-- use typed errors with stable codes at boundaries and private detail internally;
-- document state transitions in code and test illegal transitions;
-- do not add fallback behavior that hides a failed invariant;
-- update architecture, threat model, protocol, and public CLI docs in the same change as affected behavior.
+Exit: repeated attach and disconnect reaches the same shell without blocking it.
 
-A pull request that changes framing, unsafe code, descriptor inheritance, process groups, runtime paths, or terminal parsing receives focused security review. Large phases are delivered as multiple vertical slices rather than one phase-sized pull request.
+### Step 3: lifecycle commands
 
-## 8. Measurements recorded from the first executable
+- Implement `sessions`, `sessions --json`, `stream --detach`, and `stop`.
+- Add verified process-group signaling and bounded TERM/KILL escalation.
+- Add slow-client, shell-exit, stale-cleanup, PID-reuse, and signal tests.
 
-Track these values over time for both target architectures where practical:
+Exit: all intended lifecycle operations are explicit, bounded, and deterministic.
+
+### Step 4: SSH and release hardening
+
+- Add containerized OpenSSH create, abrupt TCP loss, reconnect, and stop tests.
+- Execute both musl artifacts in clean target environments.
+- Add SBOM, checksums, provenance, install, rollback, and reproducibility documentation.
+
+Exit: a public prerelease demonstrates the same shell surviving real SSH transport loss.
+
+## 6. Review discipline
+
+- Introduce one dependency with the behavior that requires it.
+- Keep filesystem, PTY, and IPC changes in separate review slices.
+- Add malformed-input and disconnect tests with each affected boundary.
+- Never print IPC or PTY payloads on failure.
+- Keep public errors bounded and independent of supplied arguments.
+- Update architecture and threat model when behavior changes.
+- Record size and dependency deltas for both musl targets.
+
+## 7. Measurements
+
+Track from each release build:
 
 - stripped and compressed executable size;
-- direct and transitive runtime dependency count;
-- idle runner RSS at 80x24 and configured scrollback;
-- runner ready latency;
-- throughput while PTY output is continuously drained;
-- maximum observed attachment queue and replay allocation;
-- startup and steady-state open file-descriptor count.
+- direct and transitive dependency count;
+- idle detached-runner RSS;
+- runner-ready latency;
+- open file descriptors while attached and detached;
+- highest configured output queue allocation.
 
-Measurements use a checked-in benchmark method and representative host description. Regressions beyond an agreed tolerance require explanation rather than silent budget changes.
+The current artifact checks remain under `tests/acceptance/`.

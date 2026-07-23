@@ -1,6 +1,6 @@
 # AFK CLI Architecture
 
-**Status:** Draft RFC
+**Status:** Draft
 
 **Repository:** `afk-cli`
 
@@ -8,226 +8,118 @@
 
 ## 1. Purpose
 
-AFK CLI keeps an interactive terminal process alive when its SSH connection disappears.
-
-A conventional SSH shell ties the remote pseudo-terminal (PTY) to one SSH channel. If the network changes, the laptop sleeps, or the client is suspended, that channel closes and the shell usually receives a hangup. AFK inserts a small, user-owned session runner between SSH and the PTY:
+AFK CLI keeps one user-owned terminal process alive when its SSH connection disappears.
 
 ```text
-SSH connection A -> AFK attach process -> AFK session runner -> PTY -> shell
-                         connection A ends ---X
-SSH connection B -> AFK attach process -----^      same PTY and shell
+SSH connection
+      |
+      v
+afk attach process             short-lived
+      |
+      | owner-only Unix socket
+      v
+afk session runner             persistent
+      |
+      | PTY master
+      v
+login shell and child processes
 ```
 
-The SSH client reconnects and attaches to the same runner. Shell state, working directory, foreground process, and in-memory terminal state remain on the remote host.
+When SSH disconnects, the attach process and its socket connection end. The runner keeps the PTY and shell alive. A later SSH connection starts another attach process and connects to the same runner.
 
-AFK is deliberately narrower than a general-purpose terminal multiplexer or remote administration agent:
+AFK does not implement SSH. A normal SSH PTY channel carries terminal stdin and stdout to the remote `afk` process.
 
-- it does not implement SSH;
-- it does not depend on a particular SSH client or private integration;
-- it does not open a TCP or UDP port;
-- it does not require a hosted relay or account;
-- it does not run a machine-wide daemon;
-- it does not provide windows, panes, or a command language;
-- it does not promise survival across host reboot;
-- it does not predict local keystrokes.
+AFK is intentionally smaller than a terminal multiplexer:
 
-Its job is process continuity across SSH disconnections.
+- no windows or panes;
+- no hosted service or account;
+- no TCP or UDP listener;
+- no machine-wide daemon;
+- no terminal emulator or screen reconstruction;
+- no terminal recording;
+- no public wire protocol;
+- no survival across host reboot.
 
-## 2. Design principles
+The initial promise is process continuity, not perfect reconstruction of terminal output missed while disconnected.
 
-1. **The shell outlives attachments.** An attachment ending must never imply session termination.
-2. **One self-contained executable.** The repository produces a binary named `afk` with required runtime components linked in.
-3. **No public listener.** Control is available only through owner-only Unix sockets and SSH-carried stdio.
-4. **SSH remains the security boundary.** Host verification, user authentication, confidentiality, and transport integrity belong to SSH.
-5. **Terminal bytes remain bytes.** Output is not decoded as UTF-8 before terminal parsing or delivery.
-6. **The PTY is always drained.** A disconnected or slow client must not block the child process.
-7. **Reconnect is ordered.** Sequence replay or a snapshot establishes a baseline before live output.
-8. **Creation is idempotent.** An uncertain network outcome must not create duplicate shells.
-9. **Resources are bounded.** Frames, queues, replay, snapshots, metadata, and client state all have explicit limits.
-10. **Failures are honest.** AFK never claims continuity when the host's process policy prevents it.
-11. **No terminal recording by default.** Terminal output and input are not written to disk.
-12. **Open development.** Protocol, threat model, build, tests, and release provenance are public and reviewable.
-13. **Client-agnostic integration.** The human CLI and published wire protocol are complete integration contracts; no unpublished client behavior is required.
+## 2. Design rules
 
-## 3. Terminology
+1. The runner, not the SSH attachment, owns the PTY and child process.
+2. Losing an attachment never stops the session.
+3. The runner always drains PTY output, even with no attachment.
+4. Output produced while detached is discarded rather than stored without bound.
+5. Runtime sockets and metadata are accessible only to the owning Unix user.
+6. Internal IPC records, buffers, names, paths, and terminal dimensions are bounded.
+7. Session identifiers are random and validated before use in a path.
+8. `attach` never creates a replacement shell.
+9. `stop` is explicit and distinct from disconnecting.
+10. Terminal bytes, input, environment values, and credentials are never logged.
+11. User-provided values are never interpolated into shell command strings.
+12. Unsafe Rust is denied by default and isolated if a PTY operation requires it.
 
-### CLI
+## 3. Commands
 
-The installed `afk` executable. It implements human commands, the SSH stdio bridge, and the hidden session-runner mode.
+The initial command surface is:
 
-### Session runner
-
-One long-running process for one terminal session. It owns the PTY master, child process group, terminal replica, replay ring, Unix socket, and active attachment lease.
-
-There is no global runner. Five persistent sessions mean five independent runner processes.
-
-### Attachment
-
-A temporary controller connected to a runner. It carries input, output, resize, acknowledgements, and lifecycle messages. A human terminal attachment or SSH stdio bridge may be an attachment.
-
-### SSH bridge
-
-A short-lived `afk ssh-bridge` process invoked through an SSH exec channel. It carries the AFK protocol between stdin/stdout and a local runner socket. If SSH breaks, only this bridge ends.
-
-### Session ID
-
-A random 128-bit identifier selected before session creation. It makes create retries idempotent and addresses the runner on later attachments.
-
-### Session epoch
-
-A random value generated by a newly created runner. It distinguishes a current runner from stale metadata or an accidentally reused session ID.
-
-## 4. CLI interface
-
-The repository is called `afk-cli`; the binary and command prefix are `afk`.
+```text
+afk --help
+afk --version
+afk stream [--id SESSION_ID] [--detach]
+afk attach SESSION_ID
+afk sessions [--json]
+afk stop SESSION_ID
+```
 
 ### `afk stream`
 
-Create a persistent session and attach the invoking terminal unless `--detach` is present.
+`stream` creates a runner and starts the account's login shell in a PTY.
 
-```bash
-afk stream
-afk stream --name production-shell
-afk stream --detach
-afk stream --cwd /srv/app -- zsh -l
-```
-
-Rules:
-
-- No command starts the account's login shell from `$SHELL`, with a safe `sh` fallback.
-- An explicit command is passed as an argv vector after `--`; no intermediate shell is introduced.
-- `--cwd` must name an existing accessible directory.
-- `--detach` prints the session ID and exits after the runner reports readiness.
-- The command does not report success until the socket is bound and the PTY child has started.
-- A machine client may supply a pre-generated session ID through the framed protocol, not through a shell-interpolated argument.
-
-Typical SSH use:
-
-```bash
-ssh -t host.example afk stream
-```
-
-If that connection breaks, reconnect with:
-
-```bash
-ssh -t host.example afk attach <session-id>
-```
+- With no `--id`, AFK generates a random 128-bit session ID.
+- `--id` accepts exactly 32 lowercase hexadecimal characters.
+- A caller-generated ID allows a safe retry after an uncertain SSH disconnect.
+- If the same ID already has a live runner, `stream` attaches to it instead of creating another shell.
+- AFK prints the session ID before entering terminal forwarding.
+- `--detach` prints the ID and exits after the runner reports readiness.
+- No arbitrary command or working-directory option is included initially.
 
 ### `afk attach`
 
-Attach a human terminal to an existing session.
+`attach` connects the invoking terminal to an existing runner.
 
-```bash
-afk attach <session-id>
-afk attach production-shell
-afk attach <session-id> --takeover
-```
-
-With no identifier, AFK attaches only when exactly one live session exists. Ambiguous names are rejected.
-
-Human attach:
-
-- enters raw terminal mode;
-- sends current rows and columns;
-- restores local terminal modes on normal exit, error, panic, and handled signals;
-- interprets `~.` immediately after a newline as detach;
-- exits with the child status when the shell ends while attached;
-- does not terminate the shell when the attachment ends.
-
-### `afk detach`
-
-Disconnect an active attachment while keeping the runner and shell alive.
-
-```bash
-afk detach <session-id>
-afk detach --all
-```
-
-This is mainly a recovery command for stale attachments. Normal human attachment uses `~.`. Protocol clients send a `Detach` frame.
+- The session must already exist.
+- A new attachment replaces an older one so a stale SSH connection cannot block recovery.
+- The local terminal enters raw mode and is restored on exit and handled signals.
+- Initial dimensions and later resize events are forwarded to the runner.
+- Closing SSH, stdin, or the Unix socket detaches without stopping the shell.
+- No failed attach path creates a new session.
 
 ### `afk sessions`
 
-List running and briefly retained completed sessions.
+`sessions` lists live sessions using safe metadata:
 
-```bash
-afk sessions
-afk sessions --json
-```
-
-Output may include:
-
-- session ID and display name;
-- running, detached, attached, or completed status;
+- session ID;
 - runner and child PID;
-- executable basename;
-- working directory;
 - start time;
-- protocol and binary versions;
-- exit status for completed sessions.
+- attached or detached state.
 
-Output must not include terminal contents, command input, environment values, or credentials.
+`--json` provides bounded machine-readable output. Output excludes command input, terminal bytes, environment values, and credentials.
 
 ### `afk stop`
 
-Terminate a session deliberately.
+`stop` asks the verified runner to terminate its PTY process group. The runner sends `SIGTERM`, waits for a bounded grace period, then uses `SIGKILL` if required.
 
-```bash
-afk stop <session-id>
-afk stop --all
-```
+AFK never signals a PID from stale metadata without first connecting to and verifying the runner.
 
-AFK sends `SIGTERM` to the runner-owned PTY process group, waits for a bounded grace period, and sends `SIGKILL` if needed. `detach` and `stop` must remain distinct in command names, help, output, and protocol.
-
-### `afk doctor`
-
-Test whether the current host can reliably support AFK sessions.
-
-```bash
-afk doctor
-afk doctor --json
-```
-
-Checks include:
-
-- runtime directory ownership and permissions;
-- Unix socket creation and path length;
-- PTY creation;
-- executable architecture;
-- terminal engine initialization;
-- checked session detachment;
-- survival after an SSH-like launcher exits;
-- detectable systemd-logind or container policies that kill login processes.
-
-### `afk ssh-bridge`
-
-Machine-only bridge intended for an SSH exec channel without an SSH PTY:
-
-```sh
-exec "$HOME/.local/lib/afk/afk" ssh-bridge
-```
-
-The command is fixed. Operation, session ID, dimensions, and create options arrive in framed stdin after negotiation.
-
-Machine-mode requirements:
-
-- stdout contains protocol bytes only;
-- stderr is empty unless an explicitly negotiated diagnostic mode is active;
-- no banner, progress text, shell initialization, or ANSI decoration is emitted;
-- logs never contain terminal input/output;
-- malformed input receives a stable error when safely possible, then closes.
-
-Internal runner commands are hidden and require inherited startup handles that an ordinary caller cannot accidentally provide.
-
-## 5. Process model
+## 4. Process model
 
 ```text
 sshd
   |
-  +-- afk ssh-bridge                 attachment lifetime
+  +-- afk stream/attach             SSH lifetime
         |
-        | framed Unix socket
+        | Unix socket
         v
-      afk __session-runner           session lifetime
+      afk __runner                  session lifetime
         |
         +-- PTY master
               |
@@ -236,61 +128,87 @@ sshd
                     +-- foreground process tree
 ```
 
-The runner is detached before the first attachment begins. It does not wait for SIGHUP and then attempt to save the process.
+There is one runner per session and no global daemon.
 
 ### Checked startup
 
-The launcher creates a private startup channel and starts the runner using checked Unix daemonization. The runner:
+The launcher creates a private startup socket pair and starts the current executable in a hidden runner mode. The runner:
 
-1. creates a new session and process group;
-2. resets inherited signal dispositions;
-3. applies umask `077`;
-4. redirects standard descriptors away from the SSH channel;
-5. closes unrelated inherited descriptors;
-6. validates and creates its runtime files;
-7. binds an owner-only Unix socket;
-8. opens the PTY and starts the child;
-9. atomically writes metadata;
-10. reports `Ready` or a typed error through the startup channel;
-11. enters its event loop.
+1. validates the inherited startup descriptor;
+2. creates a new Unix session and detaches from the SSH process group;
+3. applies umask `077` and closes unrelated descriptors;
+4. creates and validates its runtime files;
+5. binds an owner-only Unix socket;
+6. creates the PTY and starts the login shell by argv;
+7. writes bounded safe metadata atomically;
+8. reports `Ready` or a typed error through the startup socket;
+9. enters the runner loop.
 
-Every system-call result is checked. Merely invoking `nohup`, ignoring SIGHUP, or calling unchecked `setsid()` after disconnection is insufficient.
+The launcher reports success only after `Ready`. Every system-call result is checked. `nohup` alone is not sufficient.
 
-### Host policy limits
+Host cgroup or login policy may still kill detached processes. AFK reports this limitation honestly; a later diagnostic command may automate host-policy checks.
 
-Detaching from a terminal does not escape cgroups or administrator policy. A host may kill all processes from an SSH login when that login ends. AFK must detect common cases and provide a survival probe in `afk doctor`.
+## 5. Internal IPC
 
-An optional user-service launcher may be added for affected systems, but initial AFK:
+The Unix socket record format is private implementation plumbing between `afk` processes on the same host. It is not carried directly over SSH and is not an integration API.
 
-- runs without root;
-- does not install a system service;
-- does not claim persistence on unsupported hosts.
+Each record has a small fixed header:
 
-## 6. Session creation and identity
+```text
+kind          u8
+payload_len   u32, big-endian
+payload       payload_len bytes
+```
 
-The client creates a random session ID before requesting creation. This permits safe retries when SSH fails after a request was sent but before the response arrived.
+The decoder rejects a payload length above 64 KiB before allocation. Initial record kinds are:
 
-Creation uses an exclusive lock:
+- `Attach`: initial rows and columns;
+- `Input`: terminal input bytes;
+- `Output`: PTY output bytes;
+- `Resize`: rows and columns;
+- `Stop`: deliberate session termination;
+- `Exit`: child exit status;
+- `Error`: bounded stable internal error code.
 
-- no existing ID: create a runner;
-- same ID and compatible live runner: attach;
-- same ID with incompatible immutable create options: return `SessionConflict`;
-- stale metadata: verify socket and epoch before cleanup;
-- simultaneous create requests: exactly one wins.
+The format carries only live terminal and lifecycle events. It does not attempt reliable delivery or reconstruct missed output.
 
-The runner generates a session epoch and returns it in `Welcome`. A reconnecting client presents both ID and known epoch. A mismatch invalidates cached output/input sequence state and requires a fresh snapshot.
+Before version 1.0, users should stop existing sessions before upgrading.
 
-Session names are labels, not identity. Names are bounded, normalized only where safe, and may not be ambiguous for human lookup.
+### Forwarding behavior
 
-## 7. Runtime filesystem
+The runner uses one nonblocking event loop for the PTY, listener, and single active attachment. Accepting a new attachment closes the previous attachment socket.
 
-Default root:
+- PTY reads never wait for a client write.
+- Input and output records are at most 64 KiB.
+- The active attachment output queue is capped initially at 1 MiB.
+- A slow attachment is disconnected when its queue fills.
+- With no attachment, PTY output is read and discarded.
+- Reattachment starts with new output; missed output is not replayed.
+- A resize is applied to the runner-owned PTY and normally prompts full-screen applications to redraw.
+
+Input that was in flight when SSH failed has the same uncertainty as ordinary SSH. AFK does not attempt transactional input delivery.
+
+Initial fixed bounds are:
+
+```text
+IPC payload                 64 KiB
+attachment output queue      1 MiB
+metadata file               64 KiB
+terminal rows/columns        1..=4096
+sessions returned per list   1024
+PTY bytes processed per tick 256 KiB
+stop grace period             5 seconds
+```
+
+These values may change after measurement, but they never become unbounded.
+
+## 6. Runtime files
+
+Default runtime root:
 
 ```text
 ~/.afk/run/
 ```
-
-A home-relative directory is used instead of relying exclusively on `$XDG_RUNTIME_DIR`, which may disappear when the final login session ends.
 
 Per-session files:
 
@@ -302,523 +220,197 @@ Per-session files:
 
 Requirements:
 
-- root directory mode 0700;
-- socket and lock mode 0600;
+- root mode 0700;
+- owner-only socket and lock;
 - expected UID ownership;
 - no symlink traversal;
+- exclusive creation;
 - atomic metadata replacement;
-- explicit Unix socket path-length validation;
-- configurable short path for long home directories;
-- stale cleanup based on socket handshake and process identity, not PID alone.
+- Unix socket path-length validation;
+- bounded metadata read before JSON parsing;
+- stale cleanup based on a socket handshake, not PID alone.
 
-Metadata contains only safe lifecycle information. Terminal bytes and input are memory-only by default.
+The home-relative root avoids relying only on `$XDG_RUNTIME_DIR`, which may disappear when the final login ends.
 
-## 8. Protocol
+Metadata contains lifecycle information only. Terminal input and output remain memory-only and are not retained after being forwarded or discarded.
 
-The same framed protocol runs over a local Unix socket and SSH bridge stdin/stdout.
+## 7. Session lifecycle
 
-The protocol specification will be maintained separately in `docs/PROTOCOL.md` before implementation is declared stable. This section defines the architectural requirements.
+A session ends when:
 
-### Framing
+- the shell exits;
+- the user runs `afk stop`;
+- the host or administrator kills it;
+- the runner or PTY fails unrecoverably.
 
-Each frame contains:
+There is no detached-session timeout. When the shell exits, the runner sends an exit record to an active attachment, removes its runtime files, and exits. Completed sessions are not retained initially.
 
-- fixed magic;
-- protocol version;
-- message kind;
-- flags;
-- request/stream identifier where needed;
-- payload length;
-- payload.
+Disconnecting, terminal EOF, and `stop` are separate state transitions and have separate tests.
 
-The decoder enforces payload limits before allocation. It rejects integer overflow, truncated frames, unsupported mandatory flags, and invalid state transitions.
+## 8. Security boundary
 
-Initial limits to validate through profiling:
+SSH remains responsible for host verification, user authentication, encryption, and transport integrity. AFK adds no network listener or remote credential.
 
-```text
-control frame             64 KiB
-input frame               64 KiB
-output frame              64 KiB
-snapshot chunk           256 KiB
-aggregate snapshot        10 MiB
-per-attachment queue       1 MiB
-session replay ring        4 MiB
-```
+The local controls are:
 
-### Handshake
+- owner-only runtime directory and socket;
+- peer credential checks where available;
+- strict session-ID parsing;
+- bounded IPC records and queues;
+- symlink-safe runtime operations;
+- argv-based shell startup;
+- verified runner control before signaling;
+- no terminal data in logs or metadata.
 
-```text
-Hello {
-  supported_protocol_min,
-  supported_protocol_max,
-  client_id,
-  operation,
-  session_id,
-  known_session_epoch?,
-  last_output_seq?,
-  last_acked_input_seq?,
-  columns,
-  rows,
-  takeover,
-}
+AFK does not isolate mutually untrusted people sharing one Unix UID. See [THREAT_MODEL.md](THREAT_MODEL.md) for the complete scoped analysis.
 
-Welcome {
-  selected_protocol,
-  capabilities,
-  session_id,
-  session_epoch,
-  attachment_id,
-  lease_generation,
-  status,
-  current_output_seq,
-  safe_process_metadata,
-}
-```
+## 9. Rust structure
 
-No overlap returns `ProtocolMismatch`; it never silently downgrades outside the advertised range.
-
-### Stream messages
+The repository remains one Cargo package and one executable. Modules are introduced only when they contain behavior:
 
 ```text
-Input { client_id, input_seq, bytes }
-InputAck { client_id, input_seq }
-Output { output_seq, bytes }
-OutputAck { output_seq }
-Resize { columns, rows }
-ReplayBegin { from_seq, through_seq }
-ReplayEnd { through_seq }
-SnapshotBegin { format, baseline_seq, total_bytes }
-SnapshotChunk { index, bytes }
-SnapshotEnd { baseline_seq }
-Detach { attachment_id }
-Detached { reason }
-Exit { exit_status, signal? }
-Ping { nonce }
-Pong { nonce }
-Error { stable_code }
+src/
+  main.rs          thin process entry point
+  lib.rs           application dispatch and test seam
+  cli.rs           argument parsing
+  identity.rs      session IDs
+  limits.rs        reviewed bounds
+  ipc.rs           local record encoding and decoding
+  registry.rs      runtime files and session lookup
+  runner.rs        PTY and attachment event loop
+  attach.rs        terminal and Unix-socket forwarding
+  platform/linux.rs
+                   PTY, process-group, peer, and polling operations
 ```
 
-Stable error codes are public API. Human-readable internal errors are not sent as unbounded remote text.
+Dependency direction stays simple:
 
-### Versioning
-
-- Protocol version is independent from CLI semantic version.
-- Snapshot formats have separate capability identifiers.
-- A bridge must support at least one previous stable protocol during rolling upgrades.
-- Existing runners continue using their loaded executable after on-disk upgrade.
-- Unknown optional capabilities may be ignored; unknown required semantics reject the handshake.
-
-## 9. Output continuity
-
-### Replay ring
-
-The runner assigns a monotonic `u64` sequence number to each bounded PTY output chunk and stores recent chunks in a byte-bounded memory ring.
-
-On warm reconnect:
-
-1. client sends its session epoch and highest fully processed output sequence;
-2. runner verifies every subsequent sequence remains buffered;
-3. runner sends `ReplayBegin`, ordered output, and `ReplayEnd`;
-4. live output follows;
-5. client acknowledges the highest contiguous processed sequence.
-
-### Snapshot fallback
-
-A snapshot is required when:
-
-- the client has no prior state;
-- epoch changed;
-- replay history has a gap;
-- terminal dimensions require a new baseline;
-- client state is known to be corrupt.
-
-The event loop establishes an atomic baseline:
-
-1. apply attachment dimensions;
-2. process resulting PTY redraw output for a short bounded settling interval;
-3. capture terminal state at baseline sequence N;
-4. enqueue snapshot for N;
-5. enqueue only output greater than N.
-
-The initial portable format should be ANSI state replay so different terminal renderers can consume it. A more compact engine-specific snapshot can be negotiated later, but it must have a documented version and portable fallback.
-
-### Always drain the PTY
-
-PTY reads never wait for an attachment. Every output chunk is:
-
-1. read;
-2. processed by the terminal replica;
-3. used to generate any required terminal-query response;
-4. appended to bounded replay;
-5. offered to the active attachment's bounded queue.
-
-If a client queue fills, AFK detaches that client with `ClientTooSlow`; it does not block the shell. The next attachment recovers by replay or snapshot.
-
-## 10. Input continuity
-
-A broken network leaves uncertainty about whether the last input reached the PTY. Retrying bytes blindly could execute a command twice.
-
-Every input has:
-
-- stable client ID;
-- monotonic input sequence;
-- bounded byte payload.
-
-The runner remembers the highest accepted sequence for a bounded number of recent clients. It writes a new sequence to the PTY exactly once and returns `InputAck`. A duplicate sequence is acknowledged without another PTY write.
-
-Clients retry only unacknowledged input. This provides delivery deduplication, not transactional shell semantics: the shell may have consumed some bytes before a process or host failure.
-
-## 11. Terminal state and query handling
-
-The runner is the logical terminal endpoint while detached. It needs a permissively licensed terminal-state implementation that supports:
-
-- primary and alternate screens;
-- Unicode width and combining behavior;
-- colors and attributes;
-- cursor shape, visibility, and position;
-- insert/replace and input modes;
-- title state;
-- bounded scrollback;
-- resize;
-- formatted ANSI state replay;
-- terminal query responses required by full-screen applications.
-
-Candidate implementations must be evaluated publicly for correctness, size, maintenance activity, and license compatibility. A pure-Rust MIT implementation such as `vt100` is a likely starting point. A Ghostty-derived engine is acceptable only if it remains self-contained, permissively licensed, reproducibly built, and within the artifact budget.
-
-The runner answers terminal queries even when no client is attached. Protocol clients must negotiate `runner_answers_terminal_queries` and avoid returning duplicate locally generated responses.
-
-Terminal conformance tests must cover vim, top/htop, less, shells, alternate screen, resize, bracketed paste, cursor reports, device attributes, color queries, and malformed escape sequences.
-
-## 12. Attachment ownership
-
-Version one permits one controlling attachment per session.
-
-The active lease owns:
-
-- terminal input;
-- PTY dimensions;
-- output acknowledgements.
-
-Policy:
-
-- normal attach rejects a healthy existing lease;
-- explicit `--takeover` increments lease generation and detaches the old client;
-- an old bridge receives `Detached { reason: Replaced }` and closes;
-- stale half-open SSH connections cannot prevent intentional recovery;
-- simultaneous writers are deferred.
-
-The runner serializes attach, resize, snapshot, replay, and live-output transitions in one state machine.
-
-## 13. Session lifecycle
-
-### Running
-
-A running shell has no no-client timeout by default. It ends only when:
-
-- child process exits;
-- user invokes `afk stop`;
-- host/administrator terminates it;
-- runner or PTY fails unrecoverably.
-
-### Completed retention
-
-After child exit, runner:
-
-1. drains remaining PTY output;
-2. records safe exit metadata;
-3. notifies active client;
-4. retains final in-memory terminal state briefly, initially five minutes;
-5. removes runtime files and exits.
-
-No terminal content is persisted merely to implement retention.
-
-### Stop
-
-Stop targets the PTY foreground/process group, waits a documented grace period, and escalates if necessary. Signal handling is tested against pipelines and child process trees.
-
-### Upgrade
-
-Replacing the binary atomically does not alter a running process. Initial upgrade behavior:
-
-- new runners use new binary;
-- existing runners continue unchanged;
-- new bridges negotiate an overlapping protocol;
-- no live executable hot restart.
-
-This keeps release behavior predictable and avoids transferring PTY descriptors between software versions.
-
-## 14. Build and release artifacts
-
-The Cargo package is named `afk-cli` and declares a binary target named `afk`:
-
-```toml
-[package]
-name = "afk-cli"
-
-[[bin]]
-name = "afk"
-path = "src/main.rs"
+```text
+cli -> application operations
+runner/attach -> ipc + registry + platform
+ipc -> limits
+registry -> identity + limits + platform
+platform -> standard library and reviewed syscall crate
 ```
 
-AFK publishes one executable per target, not one universal binary.
+No async runtime is planned initially. The runner is single-threaded so PTY, attachment, resize, and exit ordering remain explicit.
 
-Initial targets:
+## 10. Dependencies and build
+
+Prefer the standard library. Expected small dependencies are introduced only with the feature that needs them:
+
+- `getrandom` for session IDs;
+- `rustix` for reviewed Unix and PTY operations;
+- `lexopt` if hand-written parsing stops being clear;
+- `serde` and `serde_json` for bounded metadata and `sessions --json`.
+
+AFK does not need Tokio, TLS, a terminal-emulation crate, a general logging framework, or a general wire serializer.
+
+Initial release targets are:
 
 ```text
 x86_64-unknown-linux-musl
 aarch64-unknown-linux-musl
 ```
 
-Linux release artifacts should be statically linked. Later Unix targets may rely on operating-system libraries where static linking is unsupported.
-
-Initial measurable targets:
+Release artifacts must be static and contain no `PT_INTERP` or `DT_NEEDED` entries. Current engineering budgets remain:
 
 - compressed artifact below 15 MiB;
-- idle runner RSS below 25 MiB at 80x24 with configured scrollback;
-- no dynamic non-system library dependency on Linux musl;
+- idle runner RSS below 25 MiB;
 - runner ready in under 250 ms on a representative host.
 
-Targets are engineering budgets, not reasons to omit correctness or security behavior.
+These are measured budgets, not reasons to weaken correctness.
 
-Every release includes:
+## 11. Testing
 
-- source tag;
-- checksums;
-- signed provenance/attestation;
-- SBOM;
-- dependency and license inventory;
-- protocol compatibility statement;
-- changelog;
-- artifacts produced by public CI;
-- reproducible-build instructions and known sources of variance.
+### Unit tests
 
-## 15. Installation
+- CLI parsing and bounded diagnostics;
+- session-ID generation, parsing, and formatting;
+- every IPC record round trip;
+- truncated, oversized, and unknown IPC records;
+- runtime path and metadata validation;
+- runner state transitions and queue limits.
 
-AFK may be installed manually by a package manager, from a release download, or by an independent integration. A generic managed installer should:
+### Local integration tests
 
-1. detect OS and architecture through a fixed probe;
-2. select a release-manifest artifact;
-3. upload/download to a random temporary path;
-4. verify SHA-256 and, when available, signature/provenance;
-5. set owner-executable permissions;
-6. run machine-readable version/protocol self-check;
-7. atomically activate at `~/.local/lib/afk/afk`;
-8. retain a bounded rollback artifact.
+- shell PID and cwd survive attachment loss;
+- runner survives launcher exit;
+- detached output cannot block the child;
+- reconnect reaches the same shell;
+- resize reaches the PTY;
+- a slow attachment is dropped while the shell survives;
+- `stop` handles shell process groups and descendants;
+- runtime files are cleaned after exit;
+- symlink and stale-PID cases are rejected.
 
-Installation must be explicit. AFK CLI itself contains no auto-update service. A user or separately managed integration performs updates.
+### OpenSSH end-to-end tests
 
-Removing the executable does not kill already running Unix processes. Removal tooling must explain and handle live sessions explicitly.
+- create through an SSH PTY channel;
+- destroy TCP without graceful close;
+- verify runner and shell survive;
+- reconnect and attach to the same session;
+- verify shell PID, cwd, and a synthetic variable remain;
+- stop and verify cleanup.
 
-## 16. Security model
+### Artifact tests
 
-The detailed analysis lives in [THREAT_MODEL.md](THREAT_MODEL.md). Core requirements:
+- both musl architectures;
+- no dynamic loader or shared-library dependencies;
+- size budgets;
+- dependency licenses and advisories;
+- clean-image execution.
 
-1. SSH authenticates transport users; AFK does not introduce remote credentials.
-2. No network listener exists outside SSH.
-3. Runtime paths are owner-only, symlink-safe, and peer credentials are checked where supported.
-4. Frame sizes and all queues are bounded before allocation/enqueue.
-5. Session create is random and exclusive.
-6. Machine protocol values never become shell command strings.
-7. Child launch uses argv and explicit cwd.
-8. Unexpected inherited descriptors are closed.
-9. Stop signals remain inside the runner-owned process group.
-10. Logs and metadata exclude terminal input/output and environment values.
-11. Protocol parser, terminal parser integration, and runtime cleanup are fuzzed/tested.
-12. Dependencies use licenses compatible with the repository's permissive distribution goal.
+The concrete criteria are maintained in the [acceptance test catalog](../tests/acceptance/README.md).
 
-AFK does not isolate mutually untrusted people sharing one Unix UID. Processes under the same UID generally already can inspect or signal each other.
+## 12. Delivery plan
 
-## 17. Observability and privacy
+### Step 0: scaffold — complete
 
-AFK CLI has no telemetry and no network client.
+- Rust package, thin binary, lints, tests, CI, Cargo Deny, and static musl builds;
+- side-effect-free `--help` and `--version`.
 
-Optional local diagnostics are:
+### Step 1: local session foundation
 
-- disabled by default or metadata-only by default;
-- bounded and rotated;
-- stored owner-only;
-- free of terminal bytes, keystrokes, command arguments, cwd if strict privacy mode is selected, and environment values;
-- explicitly exportable by the user.
+- bounded session ID;
+- secure runtime root and registry;
+- small internal IPC codec;
+- malformed-input and path tests.
 
-Stable counters may include bytes read, dropped client attachments, replay/snapshot selection, queue high-water marks, and lifecycle reason. They remain local.
+### Step 2: process survival
 
-## 18. Testing strategy
+- checked runner startup;
+- PTY and login shell;
+- always-drained output;
+- basic `stream` and `attach`;
+- prove disconnect/reconnect preserves the process.
 
-The [acceptance test catalog](../tests/acceptance/README.md) maps these requirements to concrete process, protocol, OpenSSH, and release-artifact criteria.
+### Step 3: lifecycle and hardening
 
-### Unit
+- `sessions`, `--json`, `--detach`, and `stop`;
+- resize, slow-client handling, stale cleanup, and signal tests;
+- OpenSSH abrupt-disconnect tests.
 
-- every frame type round trip;
-- malformed, truncated, oversized, and overflow framing;
-- protocol negotiation;
-- state-machine transition tables;
-- replay gap boundaries;
-- input deduplication;
-- bounded queues;
-- snapshot/live baseline ordering;
-- registry ownership, atomicity, symlink rejection, and PID reuse;
-- name/path/argv validation;
-- signal and exit classification.
+### Step 4: release readiness
 
-### Fuzzing
+- both musl targets executed in clean fixtures;
+- artifact checks, SBOM, checksums, provenance, and install documentation;
+- architecture and threat model reconciled with implementation.
 
-- frame decoder;
-- handshake payload decoder;
-- registry metadata parser;
-- terminal output ingestion boundaries;
-- formatted snapshot generation;
-- command-line and machine create validation.
+## 13. Deferred scope
 
-### Local integration
-
-- shell PID, variables, and cwd survive detach/attach;
-- launcher termination does not end runner;
-- high output while detached does not block child;
-- warm reconnect receives each output once;
-- cold reconnect receives usable state;
-- full-screen alternate-screen applications recover;
-- query-dependent applications continue while detached;
-- resize ordering is correct;
-- stale attachment takeover works;
-- slow client is detached, shell survives;
-- completed retention and cleanup;
-- explicit stop handles process trees;
-- binary replacement leaves old runner attachable.
-
-### SSH end-to-end
-
-A containerized OpenSSH fixture must:
-
-1. create through an SSH channel;
-2. destroy TCP without graceful channel close;
-3. verify runner and child PID survive;
-4. reconnect through a new TCP connection;
-5. attach to the same session epoch;
-6. verify shell nonce, cwd, and foreground process remain;
-7. repeat during high output, resize, and alternate-screen activity;
-8. test host policies that do and do not preserve detached processes.
-
-### Release
-
-- clean minimal Linux images;
-- both target architectures;
-- ELF architecture, `PT_INTERP`, and `DT_NEEDED` checks for both musl artifacts;
-- machine-readable dynamic-library dependency inventory;
-- binary/RSS/startup budgets;
-- SBOM and license policy;
-- checksum and signature verification;
-- install, rollback, and downgrade compatibility.
-
-## 19. Open-source review requirements
-
-AFK CLI is intended to be understandable and auditable without private context.
-
-Before the first stable release, the repository must contain:
-
-- architecture and protocol specifications;
-- threat model;
-- dependency policy and generated license inventory;
-- contributor guide;
-- security reporting process;
-- code of conduct if a broader community forms;
-- public CI definitions;
-- test and fuzz corpora that contain no private terminal data;
-- interoperability fixtures that require no private client code or unpublished behavior;
-- benchmark method and results;
-- release and compatibility policy;
-- decision records for security- or protocol-significant choices.
-
-Protocol or security changes require:
-
-1. a written design/ADR;
-2. tests for success and failure paths;
-3. malformed-input coverage;
-4. backward-compatibility assessment;
-5. at least one reviewer independent from the author;
-6. explicit note in changelog when user-visible or wire-visible.
-
-Unsafe Rust is denied by default. A narrowly scoped exception requires documented invariants, platform motivation, tests, and dedicated review.
-
-## 20. Delivery plan
-
-[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) defines the proposed Rust module boundaries, dependency policy, musl build strategy, and review-sized delivery sequence for these phases.
-
-### Phase 0: process survival spike
-
-- Initialize Rust package producing binary `afk`.
-- Build static x86_64 Linux artifact.
-- Start a login shell in a PTY.
-- Start a checked detached runner.
-- Bridge through an owner-only Unix socket.
-- Kill launcher and prove shell PID/cwd survive.
-- Measure artifact size and RSS.
-
-Exit: process continuity works without tmux or screen.
-
-### Phase 1: hardened human CLI
-
-- Implement `stream`, `attach`, `detach`, `sessions`, `stop`, and `doctor`.
-- Add secure registry and checked process-group lifecycle.
-- Add versioned bounded framing and attachment lease.
-- Add local integration and parser fuzz tests.
-
-Exit: repeated detach/attach is deterministic under high-output shell and TUI workloads.
-
-### Phase 2: reliable continuity protocol
-
-- Add output replay and acknowledgements.
-- Add input sequencing/deduplication.
-- Add terminal replica, detached query handling, and ANSI snapshot fallback.
-- Publish full `PROTOCOL.md`.
-
-Exit: warm and cold reconnect preserve usable terminal state without Ctrl+L heuristics.
-
-### Phase 3: SSH and release hardening
-
-- Add OpenSSH E2E fixtures and network-failure tests.
-- Add musl x86_64/aarch64 artifacts.
-- Add checksums, SBOM, provenance, license checks, and install documentation.
-- Validate hostile login-policy diagnostics.
-
-Exit: a public prerelease is reproducible, auditable, and resumes the same shell across real SSH TCP loss.
-
-## 21. Deferred scope
-
+- terminal output replay;
+- terminal screen snapshots or emulation;
+- exactly-once input delivery;
+- multiple simultaneous attachments;
+- attachment takeover;
+- compatibility with old runners after upgrade;
+- custom child commands and working directories;
+- windows, panes, and scrollback;
 - host reboot persistence;
 - machine-wide service;
-- public network protocol;
-- synchronized multi-writer sessions;
-- windows and panes;
-- file transfer;
-- port forwarding;
-- hosted relay/discovery;
-- predictive local echo;
-- terminal-content recording;
-- live executable hot restart;
-- Windows host support.
-
-## 22. Open decisions
-
-1. Terminal engine: pure Rust `vt100`, a permissive Ghostty component, or another reviewed implementation?
-2. Initial completed-session retention: five minutes or another bounded duration?
-3. Default replay ring: 4 MiB or a value derived from workload benchmarks?
-4. Should same-client reconnect take over automatically while unrelated clients require `--takeover`?
-5. Should explicit human commands remain supported in the first release or launch only login shells?
-6. Which process-survival policies can `doctor` reliably detect without privilege?
-7. Should the protocol payload be custom fixed binary, postcard, CBOR, or another bounded encoding?
-8. Which release-signing and provenance system should be mandatory before managed installation?
-9. Is macOS a first-stable target or a follow-up after Linux?
-10. What minimum previous protocol window is sustainable for long-running old sessions?
-
-## 23. Recommended initial decisions
-
-- Dual-license repository under MIT OR Apache-2.0.
-- Linux musl x86_64 first; aarch64 required before stable release.
-- One runner per session and one controlling attachment.
-- Client-generated session IDs and runner-generated epochs.
-- Same-client reconnect may take over a stale lease.
-- 4 MiB replay and five-minute completed retention as measured starting points.
-- ANSI snapshot fallback is mandatory regardless of compact snapshot support.
-- Login shell is the machine protocol's initial create target; explicit commands remain a human CLI feature.
-- No auto-update behavior inside the binary.
-- No silent fallback from failed attach to a newly created shell.
+- TCP/UDP listener;
+- hosted relay or discovery;
+- file transfer and port forwarding;
+- telemetry and terminal recording;
+- non-Linux hosts.
