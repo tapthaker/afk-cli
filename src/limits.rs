@@ -22,7 +22,5 @@ pub(crate) const MAX_PTY_BYTES_PER_TICK: usize = 256 * 1024;
 pub(crate) const COMPLETED_RETENTION_SECONDS: u64 = 24 * 60 * 60;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) const STOP_GRACE_SECONDS: u64 = 5;
-#[cfg(target_os = "linux")]
-pub(crate) const UNIX_SOCKET_PATH_BYTES: usize = 107;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) const UNIX_SOCKET_PATH_BYTES: usize = 103;

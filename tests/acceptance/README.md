@@ -72,7 +72,7 @@ The current package implements the Linux and macOS session lifecycle, bounded ra
 | --- | --- | --- |
 | MAC-001 | Native macOS create, live replay, completion, stop, and retained-output tests pass. | Step 2/3 |
 | MAC-002 | An interactive macOS shell retains the same PID, cwd, and synthetic variable across attachment replacement. | Step 2B |
-| MAC-003 | macOS runtime paths enforce the 103-byte socket limit and owner-only file modes. | Step 1B |
+| MAC-003 | macOS runtime paths enforce the shared 103-byte socket limit and owner-only file modes. | Step 1B |
 | MAC-004 | Intel and Apple Silicon binaries compile from the same reviewed Unix implementation. | Step 4 |
 
 ### OpenSSH disconnect

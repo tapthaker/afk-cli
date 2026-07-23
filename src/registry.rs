@@ -201,7 +201,7 @@ impl Registry {
         let paths = self.paths(session)?;
         verify_path(&paths.socket, self.uid, PathKind::Socket, 0o600)?;
         let stream = UnixStream::connect(&paths.socket)?;
-        if peer_uid(&stream)?.is_some_and(|uid| uid != self.uid) {
+        if peer_uid(&stream)? != self.uid {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "session peer owner mismatch",

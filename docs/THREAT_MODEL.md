@@ -59,7 +59,7 @@ Controls:
 - mode-0700 runtime directory;
 - owner-only socket and lock;
 - ownership verification;
-- Linux peer credential checks; macOS relies on the owner-only directory and socket because the selected safe Unix API does not expose `getpeereid`;
+- peer credential checks through one portable Unix API on both supported hosts;
 - strictly validated 128-bit session IDs;
 - no public listener.
 
@@ -245,7 +245,7 @@ The initial implementation defines and tests at least:
 - session ID: 16 bytes encoded as 32 lowercase hexadecimal characters;
 - metadata file: 64 KiB;
 - terminal rows and columns: 1 through 4096;
-- Unix socket path: 107 bytes on Linux and 103 bytes on macOS;
+- Unix socket path: 103 bytes on both supported hosts;
 - sessions returned by one listing: 1024;
 - stop grace period: five seconds;
 - command argv: 256 entries and 64 KiB aggregate;
@@ -265,7 +265,7 @@ Unsafe Rust is denied by default. A required exception must have:
 - focused platform tests;
 - independent review and sanitizer coverage where applicable.
 
-Low-level PTY operations do not justify unsafe code elsewhere. `rustix-openpty` encapsulates the platform `openpty` call behind a safe API; its small unsafe boundary, descriptor ownership, close-on-exec handling, and target support are dependency-review items.
+Low-level PTY and peer-credential operations do not justify unsafe code elsewhere. `rustix-openpty` and `unix-cred` encapsulate those platform calls behind shared safe APIs; their small unsafe boundaries, descriptor handling, and target support are dependency-review items.
 
 ## Security review gates
 

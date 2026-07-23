@@ -38,7 +38,7 @@ x86_64-apple-darwin
 aarch64-apple-darwin
 ```
 
-The Linux artifacts are static. Shared Unix operations stay under `platform` so they do not leak into CLI, IPC, or registry code. Target-specific socket limits and peer checks remain explicit.
+The Linux artifacts are static. Shared Unix operations stay under `platform` so they do not leak into CLI, IPC, or registry code. Both supported hosts use the same conservative socket limit and peer-credential interface.
 
 ### One synchronous runner loop
 
@@ -74,6 +74,7 @@ Use the standard library where it remains clear. Expected dependencies are:
 | --- | --- | --- |
 | Unix operations | `rustix` | Enable only required features. |
 | Portable PTY creation | `rustix-openpty` | Safe wrapper for Linux and Apple PTY allocation. |
+| Unix peer credentials | `unix-cred` | One safe interface for both supported hosts. |
 | Signal registration | `signal-hook` | Atomic flags only; no signal thread. |
 | CLI parsing | `lexopt` | Add only if the current parser becomes unclear. |
 | Metadata JSON | `serde`, `serde_json` | Cap file size before parsing; never serialize terminal data. |
@@ -214,13 +215,13 @@ Track from each release build:
 
 The current artifact checks remain under `tests/acceptance/`.
 
-Initial lifecycle implementation measurement (Rust 1.85.0, stripped release profile):
+Post-portability-review measurement (Rust 1.85.0, stripped release profile):
 
 ```text
-AArch64 musl   666,504 bytes; 347,411 bytes gzip -9
-x86-64 musl    758,984 bytes; 366,463 bytes gzip -9
-Apple arm64    590,720 bytes; 288,622 bytes gzip -9
-Apple x86-64   602,880 bytes; 301,583 bytes gzip -9
+AArch64 musl   664,888 bytes; 346,556 bytes gzip -9
+x86-64 musl    756,872 bytes; 365,495 bytes gzip -9
+Apple arm64    590,848 bytes; 289,145 bytes gzip -9
+Apple x86-64   602,984 bytes; 301,695 bytes gzip -9
 ```
 
-Direct Unix dependencies are `rustix`, `rustix-openpty`, `signal-hook`, `serde`, and `serde_json`; Cargo Deny verifies their transitive licenses, advisories, sources, and duplicate-version policy.
+Direct Unix dependencies are `rustix`, `rustix-openpty`, `unix-cred`, `signal-hook`, `serde`, and `serde_json`; Cargo Deny verifies their transitive licenses, advisories, sources, and duplicate-version policy. `unix-cred` adds one focused system-call wrapper and no transitive package beyond the already-used `libc` crate.

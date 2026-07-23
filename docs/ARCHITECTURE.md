@@ -247,7 +247,7 @@ Requirements:
 - no symlink traversal;
 - exclusive creation;
 - atomic metadata replacement;
-- platform-specific Unix socket path-length validation;
+- a shared conservative Unix socket path-length limit;
 - bounded metadata read before JSON parsing;
 - completed output mode 0600 and size at most 256 KiB;
 - atomic completed-output replacement;
@@ -289,7 +289,7 @@ in-memory output tail        256 KiB
 completed output file        256 KiB
 metadata file                64 KiB
 terminal rows/columns         1..=4096
-Unix socket path              107 bytes Linux / 103 bytes macOS
+Unix socket path              103 bytes
 sessions returned per list    1024
 PTY bytes processed per tick  256 KiB
 stop grace period              5 seconds
@@ -301,7 +301,7 @@ Security requirements:
 
 - SSH owns remote authentication, encryption, and transport integrity;
 - runtime paths and sockets are owner-only and symlink-safe;
-- peer credentials are checked where supported;
+- peer credentials are checked on both supported hosts;
 - record lengths are checked before allocation;
 - process startup uses argv and never `sh -c` for supplied values;
 - stop signals only the verified child session leader and documents best-effort descendant cleanup;

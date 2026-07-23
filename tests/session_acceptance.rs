@@ -20,12 +20,7 @@ struct TestHome {
 
 impl TestHome {
     fn new() -> Result<Self, Box<dyn Error>> {
-        let temporary_root = if cfg!(target_os = "macos") {
-            PathBuf::from("/tmp")
-        } else {
-            std::env::temp_dir()
-        };
-        let path = temporary_root.join(format!(
+        let path = Path::new("/tmp").join(format!(
             "afk-session-acceptance-{}-{}",
             std::process::id(),
             NEXT_HOME.fetch_add(1, Ordering::Relaxed)

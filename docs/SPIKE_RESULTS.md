@@ -220,4 +220,4 @@ The shared Unix implementation was subsequently validated natively on Apple Sili
 - concurrent-create exclusion and symlink rejection;
 - Intel and Apple Silicon Mach-O cross-builds.
 
-macOS `poll` does not reliably report terminal stdin readiness. The attachment therefore sets stdin nonblocking and probes it once per bounded loop iteration, while continuing to poll the Unix socket. Linux retains direct stdin polling. This adds at most the 100 ms bounded poll interval to macOS input delivery and requires no worker thread or unsafe project code.
+macOS `poll` does not reliably report terminal stdin readiness. The shared attachment loop therefore sets stdin nonblocking and probes it once per bounded iteration on both supported hosts while continuing to poll the Unix socket. This keeps one implementation, adds at most the 100 ms bounded poll interval to idle input delivery, and requires no worker thread or unsafe project code.

@@ -23,17 +23,8 @@ pub(crate) fn create_pty(rows: u16, columns: u16) -> io::Result<(OwnedFd, OwnedF
     Ok((pty.controller, pty.user))
 }
 
-pub(crate) fn peer_uid(stream: &UnixStream) -> io::Result<Option<u32>> {
-    #[cfg(target_os = "linux")]
-    {
-        let credentials = rustix::net::sockopt::socket_peercred(stream).map_err(io::Error::from)?;
-        Ok(Some(credentials.uid.as_raw()))
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let _ = stream;
-        Ok(None)
-    }
+pub(crate) fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
+    unix_cred::get_peer_ids(stream).map(|(uid, _)| uid)
 }
 
 pub(crate) fn become_session_leader() -> io::Result<()> {
@@ -127,5 +118,20 @@ fn validate_dimensions(rows: u16, columns: u16) -> io::Result<()> {
             io::ErrorKind::InvalidInput,
             "terminal dimensions are outside AFK limits",
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::peer_uid;
+    use rustix::process::getuid;
+    use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn reads_peer_uid_from_unix_stream() -> std::io::Result<()> {
+        let (stream, _peer) = UnixStream::pair()?;
+
+        assert_eq!(peer_uid(&stream)?, getuid().as_raw());
+        Ok(())
     }
 }

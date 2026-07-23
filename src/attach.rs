@@ -95,40 +95,25 @@ fn attach_live(mut stream: UnixStream, output: &mut impl Write) -> io::Result<Pr
             stdin_closed = read_input(&mut input, &mut socket_output)?;
         }
 
-        let mut descriptors = Vec::with_capacity(2);
-        let stdin_index = if !stdin_closed && cfg!(target_os = "linux") {
-            let index = descriptors.len();
-            descriptors.push(PollFd::new(&input, PollFlags::IN));
-            Some(index)
-        } else {
-            None
-        };
-        let socket_index = descriptors.len();
-        descriptors.push(PollFd::new(
-            &stream,
-            PollFlags::IN
-                | if socket_output.is_empty() {
-                    PollFlags::empty()
-                } else {
-                    PollFlags::OUT
-                },
-        ));
-        let poll_result = poll(&mut descriptors, Some(&POLL_INTERVAL));
-        if let Err(error) = poll_result {
-            if error == rustix::io::Errno::INTR {
-                continue;
+        let socket_event = {
+            let mut descriptors = [PollFd::new(
+                &stream,
+                PollFlags::IN
+                    | if socket_output.is_empty() {
+                        PollFlags::empty()
+                    } else {
+                        PollFlags::OUT
+                    },
+            )];
+            if let Err(error) = poll(&mut descriptors, Some(&POLL_INTERVAL)) {
+                if error == rustix::io::Errno::INTR {
+                    continue;
+                }
+                return Err(io::Error::from(error));
             }
-            return Err(io::Error::from(error));
-        }
-        let events: Vec<PollFlags> = descriptors.iter().map(PollFd::revents).collect();
-        drop(descriptors);
+            descriptors[0].revents()
+        };
 
-        if stdin_index.is_some_and(|index| {
-            events[index].intersects(PollFlags::IN | PollFlags::HUP | PollFlags::ERR)
-        }) {
-            stdin_closed = read_input(&mut input, &mut socket_output)?;
-        }
-        let socket_event = events[socket_index];
         if socket_event.contains(PollFlags::OUT) {
             socket_output.flush(&mut stream)?;
         }

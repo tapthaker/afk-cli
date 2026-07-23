@@ -318,7 +318,7 @@ fn accept_candidate(files: &SessionFiles, candidate: &mut Option<Connection>) ->
     loop {
         match files.listener.accept() {
             Ok((stream, _)) => {
-                if peer_uid(&stream)?.is_some_and(|uid| uid != getuid().as_raw()) {
+                if peer_uid(&stream)? != getuid().as_raw() {
                     continue;
                 }
                 stream.set_nonblocking(true)?;
