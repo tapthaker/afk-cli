@@ -2,7 +2,7 @@
 
 Acceptance tests exercise AFK CLI at process, protocol, SSH, and release-artifact boundaries. Unit tests remain responsible for individual parsers and state transitions.
 
-The Rust package does not exist yet, so only the artifact dependency checker and its self-tests are currently executable. Product tests are added with the implementation slice that makes each criterion meaningful; they must not be committed as skipped placeholders.
+The initial Rust package includes executable CLI-001 and CLI-002 integration tests alongside the artifact dependency checker and its self-tests. Further product tests are added with the implementation slice that makes each criterion meaningful; they must not be committed as skipped placeholders.
 
 ## Test harness rules
 
@@ -24,7 +24,7 @@ Shared Rust fixture code will live under `tests/support/`. Linux-only tests shou
 | ID | Criterion | Layer | First required step |
 | --- | --- | --- | --- |
 | CLI-001 | `afk --version` exits successfully without creating runtime files. | Cargo integration | Step 0 |
-| CLI-002 | Invalid arguments return a documented nonzero exit code and bounded stderr. | Cargo integration | Step 1 |
+| CLI-002 | Invalid arguments return a documented nonzero exit code and bounded stderr. | Cargo integration | Step 0 |
 | START-001 | The launcher reports success only after the runner socket, PTY, and child are ready. | Linux process integration | Step 2 |
 | START-002 | A startup failure returns a typed error and leaves no live runner or stale socket. | Linux process integration | Step 2 |
 | START-003 | Retrying an uncertain create with the same session ID reaches one shell, not two. | Linux process integration | Step 3 |
@@ -86,7 +86,7 @@ Shared Rust fixture code will live under `tests/support/`. Linux-only tests shou
 | ID | Criterion | Layer | First required step |
 | --- | --- | --- | --- |
 | ART-001 | The final x86-64 artifact is an ELF file for the expected architecture. | Artifact acceptance | Step 0 |
-| ART-002 | The final AArch64 artifact is an ELF file for the expected architecture. | Artifact acceptance | Step 6 |
+| ART-002 | The final AArch64 artifact is an ELF file for the expected architecture. | Artifact acceptance | Step 0 |
 | ART-003 | Each Linux musl artifact has no `PT_INTERP` program header and no `DT_NEEDED` entries. | Artifact acceptance | Step 0/6 |
 | ART-004 | Dynamic dependency inventory is emitted in machine-readable form, including an empty `needed` list for static artifacts. | Artifact acceptance | Step 0 |
 | ART-005 | The unpacked and compressed executable remain within documented size budgets. | Artifact acceptance | Step 0 onward |
@@ -124,7 +124,7 @@ The checker has negative fixtures for both `PT_INTERP` and multiple `DT_NEEDED` 
 
 - Rust unit and Cargo integration tests;
 - artifact-checker self-tests;
-- x86-64 musl build and ART-001, ART-003, ART-004, and ART-005;
+- x86-64 and AArch64 musl builds and ART-001 through ART-005;
 - relevant malformed-input and disconnect tests for changed boundaries.
 
 ### Scheduled

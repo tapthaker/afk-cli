@@ -16,11 +16,20 @@ ssh -t host.example afk attach <session-id>
 
 ## Project status
 
-AFK CLI is in architecture and security review. It is not ready for production use yet.
+AFK CLI is in early implementation after architecture and security review. It is not ready for production use yet.
 
-The repository will produce a self-contained executable named **`afk`**. It will not require a hosted service, open a network port, or run a machine-wide daemon. One user-owned runner process exists for each persistent terminal session.
+The repository produces a self-contained executable named **`afk`**. It will not require a hosted service, open a network port, or run a machine-wide daemon. Once session lifecycle is implemented, one user-owned runner process will exist for each persistent terminal session.
 
 AFK CLI is client-agnostic. Its human CLI and public wire protocol are intended to be complete integration surfaces; no particular SSH client or unpublished integration behavior is required.
+
+The initial Rust executable currently provides side-effect-free help and version paths:
+
+```bash
+afk --help
+afk --version
+```
+
+Session lifecycle is not implemented yet.
 
 ## Planned commands
 

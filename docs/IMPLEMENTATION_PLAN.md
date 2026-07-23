@@ -1,6 +1,6 @@
 # AFK CLI Implementation Plan
 
-**Status:** Proposed
+**Status:** In progress
 
 This plan turns the requirements in [ARCHITECTURE.md](ARCHITECTURE.md) and [THREAT_MODEL.md](THREAT_MODEL.md) into small, reviewable Rust increments. It does not replace either document or the future wire-protocol specification.
 

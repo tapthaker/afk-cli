@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Rust, acceptance, and musl artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint all targets
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run Rust tests
+        run: cargo test --workspace --all-targets
+
+      - name: Run acceptance-tooling tests
+        run: python3 -m unittest discover -s tests/acceptance -p 'test_*.py'
+
+      - name: Check advisories, licenses, bans, and sources
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          command: check
+
+      - name: Build Linux musl artifacts
+        run: |
+          cargo build --release --locked --target x86_64-unknown-linux-musl
+          cargo build --release --locked --target aarch64-unknown-linux-musl
+
+      - name: Verify artifact architecture, linkage, and size
+        run: |
+          x86_artifact=target/x86_64-unknown-linux-musl/release/afk
+          arm_artifact=target/aarch64-unknown-linux-musl/release/afk
+          maximum_compressed_bytes=$((15 * 1024 * 1024))
+
+          file "$x86_artifact" | tee /dev/stderr | grep -F 'x86-64'
+          file "$arm_artifact" | tee /dev/stderr | grep -F 'ARM aarch64'
+          python3 tests/acceptance/check_static_elf.py --json "$x86_artifact"
+          python3 tests/acceptance/check_static_elf.py --json "$arm_artifact"
+
+          for artifact in "$x86_artifact" "$arm_artifact"; do
+            compressed_bytes=$(gzip -9 -c "$artifact" | wc -c)
+            if [ "$compressed_bytes" -ge "$maximum_compressed_bytes" ]; then
+              echo "compressed artifact exceeds 15 MiB: $artifact ($compressed_bytes bytes)" >&2
+              exit 1
+            fi
+            echo "compressed artifact: $artifact ($compressed_bytes bytes)"
+          done

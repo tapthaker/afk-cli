@@ -1,0 +1,40 @@
+[package]
+name = "afk-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Keep a user-owned PTY process alive across SSH disconnections"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tapthaker/afk-cli"
+readme = "README.md"
+keywords = ["cli", "pty", "ssh", "terminal"]
+categories = ["command-line-utilities"]
+exclude = [
+    "tests/**/__pycache__/**",
+    "tests/**/*.pyc",
+    "tests/**/*.pyo",
+]
+
+[lib]
+name = "afk_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "afk"
+path = "src/main.rs"
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

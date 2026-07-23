@@ -4,7 +4,7 @@ AFK CLI is security-sensitive infrastructure: it owns a remote PTY, parses untru
 
 ## Current phase
 
-The project is currently reviewing architecture and threat model before implementation. Design feedback is welcome through focused issues or pull requests. Proposals must describe behavior through the public CLI and protocol rather than assumptions about a particular or unpublished client integration.
+The project is in early implementation following its initial architecture and threat-model review. Design feedback is welcome through focused issues or pull requests. Proposals must describe behavior through the public CLI and protocol rather than assumptions about a particular or unpublished client integration.
 
 ## Contribution workflow
 
@@ -33,6 +33,10 @@ cargo deny check
 ```
 
 Protocol parsers and terminal-facing code may also require fuzz, sanitizer, integration, cross-compilation, and OpenSSH E2E checks.
+
+## Rust toolchain
+
+The repository pins Rust 1.85.0 and declares 1.85 as its initial minimum supported Rust version (MSRV). Toolchain or MSRV changes must be focused, documented, and validated against both Linux musl targets. The package uses Rust 2024 edition.
 
 Do not weaken a check to merge a change. Fix the issue or document and review a narrowly scoped exception.
 
