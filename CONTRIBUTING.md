@@ -17,6 +17,12 @@ The project is currently reviewing architecture and threat model before implemen
 
 ## Required checks
 
+Acceptance-tooling changes are expected to pass:
+
+```bash
+python3 -m unittest discover -s tests/acceptance -p 'test_*.py'
+```
+
 Once the Rust package is present, changes are expected to pass:
 
 ```bash

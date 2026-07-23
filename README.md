@@ -37,6 +37,7 @@ afk doctor [--json]
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
+- [Acceptance tests](tests/acceptance/README.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)

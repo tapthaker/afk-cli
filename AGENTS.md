@@ -31,6 +31,12 @@ AFK CLI persists one user-owned PTY process across SSH disconnections.
 
 ## Validation
 
+Current acceptance-tooling checks:
+
+```bash
+python3 -m unittest discover -s tests/acceptance -p 'test_*.py'
+```
+
 Once the Rust package exists:
 
 ```bash

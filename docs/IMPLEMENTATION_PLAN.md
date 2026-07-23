@@ -231,12 +231,17 @@ CI verifies each release candidate with equivalent checks to:
 cargo build --release --locked --target x86_64-unknown-linux-musl
 cargo build --release --locked --target aarch64-unknown-linux-musl
 file target/x86_64-unknown-linux-musl/release/afk
-readelf -d target/x86_64-unknown-linux-musl/release/afk
+python3 tests/acceptance/check_static_elf.py --json \
+  target/x86_64-unknown-linux-musl/release/afk
+python3 tests/acceptance/check_static_elf.py --json \
+  target/aarch64-unknown-linux-musl/release/afk
 ```
 
-The check fails if the musl artifact has an unexpected dynamic dependency. Every dependency change records compressed binary-size and idle-RSS deltas. Size budgets are measured in CI rather than enforced by intuition.
+The checker fails if a musl artifact contains a `PT_INTERP` segment or any `DT_NEEDED` dynamic-library entry. Every dependency change records compressed binary-size and idle-RSS deltas. Size budgets are measured in CI rather than enforced by intuition.
 
 ## 6. Review-sized implementation sequence
+
+The executable criteria and delivery tiers are tracked in the [acceptance test catalog](../tests/acceptance/README.md).
 
 Every step ends in a working, tested repository. Protocol and process-lifecycle changes include malformed-input and disconnect-path tests in the same change.
 

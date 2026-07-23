@@ -644,6 +644,8 @@ Stable counters may include bytes read, dropped client attachments, replay/snaps
 
 ## 18. Testing strategy
 
+The [acceptance test catalog](../tests/acceptance/README.md) maps these requirements to concrete process, protocol, OpenSSH, and release-artifact criteria.
+
 ### Unit
 
 - every frame type round trip;
@@ -700,7 +702,8 @@ A containerized OpenSSH fixture must:
 
 - clean minimal Linux images;
 - both target architectures;
-- static-link checks;
+- ELF architecture, `PT_INTERP`, and `DT_NEEDED` checks for both musl artifacts;
+- machine-readable dynamic-library dependency inventory;
 - binary/RSS/startup budgets;
 - SBOM and license policy;
 - checksum and signature verification;
