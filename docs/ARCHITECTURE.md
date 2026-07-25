@@ -14,7 +14,7 @@ AFK CLI keeps a user-owned terminal process alive when its SSH connection disapp
 SSH connection
       |
       v
-afk attach process             short-lived
+afk session process            short-lived
       |
       | owner-only Unix socket
       v
@@ -25,7 +25,7 @@ afk session runner             persistent
 default shell or explicit command
 ```
 
-When SSH disconnects, the attach process ends. The runner keeps the inner PTY and its process alive. A later SSH connection starts another attach process and reconnects to the same runner.
+When SSH disconnects, the session command's attachment ends. The runner keeps the inner PTY and its process alive. A later SSH connection runs the same session command and reconnects to that runner.
 
 AFK does not implement SSH. SSH carries ordinary terminal stdin, stdout, and resize events to the remote `afk` attachment.
 
@@ -57,35 +57,29 @@ AFK does not provide:
 ```text
 afk --help
 afk --version
-afk stream SESSION_ID [-- COMMAND [ARG...]]
-afk attach SESSION_ID
+afk session SESSION_ID [-- COMMAND [ARG...]]
 afk sessions [--json]
 afk stop SESSION_ID
 ```
 
-### `afk stream`
+### `afk session`
 
-`stream` requires a session ID, creates the runner and inner PTY when needed, starts a process, and attaches immediately.
+`session` requires a session ID and is the single create-or-connect entry point.
 
 - The ID must contain exactly 32 lowercase hexadecimal characters.
 - The caller chooses the ID before starting the SSH command.
+- When no record exists, AFK creates the runner and inner PTY, starts the process, and attaches immediately.
 - With no command, AFK executes `$SHELL` when it names an absolute executable file, with `/bin/sh` as fallback. AFK does not add login-shell flags.
-- A command after `--` is executed as an exact bounded argv vector without `sh -c`.
-- The process inherits the cwd and environment of `afk stream`; AFK does not persist either.
-- The command is used only when creating a session.
-- If the ID already exists as a live or retained completed session, `stream` returns `SessionExists` and does not attach or start another process.
-- There is no detached creation mode.
-
-### `afk attach`
-
-`attach` connects the invoking SSH terminal to an existing runner.
-
-- `attach` never creates a process.
-- For a live session, `attach` first receives the retained raw output tail and then continues with new PTY output.
-- For a retained completed session, `attach` prints the retained raw output tail, a truncation marker when needed, and the completion summary, then returns the recorded exit status.
+- A command after `--` is executed as an exact bounded argv vector without `sh -c` only when creating the session.
+- The process inherits the cwd and environment of the creating `afk session`; AFK does not persist either.
+- For a live session, AFK ignores creation argv, attaches to the existing runner, receives the retained raw output tail, and then continues with new PTY output.
+- Concurrent calls for a new ID converge on one runner; a caller that loses the create race attaches to the winner.
+- For a retained completed session, AFK ignores creation argv, prints the retained raw output tail, a truncation marker when needed, and the completion summary, then returns the recorded exit status without restarting the process.
+- A live metadata record whose runner cannot be reached fails closed. AFK does not silently create a replacement process for an ambiguous ID.
 - A new attachment replaces an older attachment so a stale SSH connection cannot block recovery.
 - The outer terminal enters raw mode and is restored when attachment ends.
 - Closing SSH, stdin, or the Unix socket detaches without stopping the session process.
+- There is no detached creation mode.
 
 ### `afk sessions`
 
@@ -106,7 +100,7 @@ sshd
   |
   +-- outer PTY
         |
-        +-- afk stream/attach       SSH lifetime
+        +-- afk session             SSH lifetime
               |
               | Unix socket
               v
@@ -197,10 +191,10 @@ SSH client sends window-change
 sshd applies TIOCSWINSZ to outer PTY
         |
         v
-kernel sends SIGWINCH to afk attach
+kernel sends SIGWINCH to afk session
         |
         v
-afk attach reads outer size with TIOCGWINSZ
+afk session reads outer size with TIOCGWINSZ
         |
         | Resize { rows, columns }
         v
@@ -237,6 +231,8 @@ Per-session files:
 ~/.afk/run/<session-id>.lock
 ~/.afk/run/<session-id>.out
 ```
+
+The JSON file is live metadata while the runner exists. After observed process completion, it is atomically rewritten as the bounded previous-session record containing the exit code or signal. Per-session records avoid a shared completion-file write race between independent runners.
 
 Requirements:
 

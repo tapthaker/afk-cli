@@ -341,7 +341,13 @@ fn ensure_private_directory(path: &Path) -> io::Result<()> {
             fs::set_permissions(path, fs::Permissions::from_mode(0o700))
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            fs::DirBuilder::new().mode(0o700).create(path)
+            match fs::DirBuilder::new().mode(0o700).create(path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    ensure_private_directory(path)
+                }
+                Err(error) => Err(error),
+            }
         }
         Err(error) => Err(error),
     }
@@ -359,7 +365,15 @@ fn verify_path(path: &Path, uid: u32, kind: PathKind, mode: u32) -> io::Result<f
         PathKind::Regular => metadata.is_file(),
         PathKind::Socket => metadata.file_type().is_socket(),
     };
-    if !type_matches || metadata.mode() & 0o777 != mode {
+    let actual_mode = metadata.mode() & 0o777;
+    let mode_matches = match kind {
+        PathKind::Regular => actual_mode == mode,
+        // bind(2) creates the socket owner-only under the runner's 077 umask,
+        // then AFK narrows it to 0600. Accepting 0700 closes the small startup
+        // race without accepting any group or other permissions.
+        PathKind::Socket => actual_mode == mode || actual_mode == 0o700,
+    };
+    if !type_matches || !mode_matches {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "invalid AFK runtime entry",

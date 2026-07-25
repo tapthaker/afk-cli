@@ -6,7 +6,7 @@ This plan implements the small process-continuity design in [ARCHITECTURE.md](AR
 
 ## 1. Implementation shape
 
-AFK remains one Cargo package and one executable. The runner and attach process are hidden modes of the same binary.
+AFK remains one Cargo package and one executable. The persistent runner and short-lived session attachment are modes of the same binary.
 
 ```text
 src/
@@ -87,7 +87,7 @@ Keep unwinding enabled so terminal-mode guards can restore the invoking terminal
 
 ## 3. Process startup
 
-1. `afk stream` validates its required 128-bit session ID and optional argv after `--`.
+1. `afk session` validates its required 128-bit session ID and optional creation argv after `--`, then connects to a live or retained completed ID before considering creation.
 2. The launcher creates a private startup socket pair.
 3. It starts the current executable in hidden runner mode with that descriptor and detached standard streams.
 4. The runner creates owner-only runtime files, binds its Unix socket, and safely opens a PTY master and slave.
@@ -162,19 +162,21 @@ Exit: concurrent or hostile filesystem entries cannot redirect session control.
 
 Exit: killing the launcher leaves the single-threaded runner, PTY, child PID, cwd, and inherited synthetic environment value intact for both default-shell and explicit-command sessions.
 
-### Step 2B: stream and attach — implemented, signal-path hardening pending
+### Step 2B: unified session and attachment — implemented, signal-path hardening pending
 
+- Implement one public `session` command that attaches to live IDs and creates only unseen IDs.
+- Make concurrent creators converge on one runner and fail closed for unreachable live records.
 - Implement raw terminal mode with RAII restoration.
 - Forward bounded input and output records.
 - Forward initial dimensions and resize events.
 - Replace an older attachment when a new one connects.
 - Treat socket close and SSH loss as detach.
 
-Exit: repeated attach and disconnect reaches the same shell without blocking it.
+Exit: repeated `session` calls after disconnect reach the same shell without blocking it or silently creating a replacement.
 
 ### Step 3: lifecycle commands — implemented, lifecycle hardening pending
 
-- Implement `sessions`, `sessions --json`, completed output/status reporting, and `stop`.
+- Implement `sessions`, `sessions --json`, previous-session output/status reporting through `session`, and `stop`.
 - Persist the raw tail only after observed process completion and mark truncation in metadata.
 - Implement best-effort stop by closing the PTY and applying bounded TERM/KILL escalation to the verified child session leader; do not add `/proc` scanning.
 - Add slow-client, shell-exit, stale-cleanup, PID-reuse, and signal tests.
@@ -215,13 +217,13 @@ Track from each release build:
 
 The current artifact checks remain under `tests/acceptance/`.
 
-Post-portability-review measurement (Rust 1.85.0, stripped release profile):
+Unified-session measurement (Rust 1.85.0, stripped release profile):
 
 ```text
-AArch64 musl   664,888 bytes; 346,556 bytes gzip -9
-x86-64 musl    756,872 bytes; 365,495 bytes gzip -9
-Apple arm64    590,848 bytes; 289,145 bytes gzip -9
-Apple x86-64   602,984 bytes; 301,695 bytes gzip -9
+AArch64 musl   665,384 bytes; 346,888 bytes gzip -9
+x86-64 musl    757,832 bytes; 365,900 bytes gzip -9
+Apple arm64    590,848 bytes; 289,586 bytes gzip -9
+Apple x86-64   602,984 bytes; 302,181 bytes gzip -9
 ```
 
 Direct Unix dependencies are `rustix`, `rustix-openpty`, `unix-cred`, `signal-hook`, `serde`, and `serde_json`; Cargo Deny verifies their transitive licenses, advisories, sources, and duplicate-version policy. `unix-cred` adds one focused system-call wrapper and no transitive package beyond the already-used `libc` crate.

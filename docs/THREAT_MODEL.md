@@ -135,14 +135,16 @@ Control: AFK makes no exactly-once claim and does not automatically resend input
 
 ### Wrong-session fallback
 
-Threat: a failed attach starts a new process and the user mistakes it for the original session.
+Threat: the unified `session` command cannot reach the intended runner, starts a replacement process, and the user mistakes it for the original session.
 
 Controls:
 
-- create and attach are distinct operations;
-- `stream` returns `SessionExists` for live or retained completed metadata;
-- `attach` never creates;
-- an explicit `stream` action is required to start a process;
+- `session` tries the verified live socket before considering creation;
+- retained completed metadata returns the recorded outcome and prevents the same ID from restarting during retention;
+- creation is attempted only when neither live nor completed metadata exists;
+- an unreachable live metadata record fails closed rather than being replaced;
+- concurrent creators converge on one runner, and losing callers attach to that runner;
+- creation argv is ignored for live and retained completed IDs;
 - session ID and safe process metadata are shown to the user.
 
 ### Shell injection
@@ -201,9 +203,9 @@ A user or process already running under the same Unix UID is outside AFK's isola
 
 ### Terminal escape sequences
 
-Threat: retained child output contains escape sequences that execute terminal behaviors when replayed by a live or completed `attach`.
+Threat: retained child output contains escape sequences that execute terminal behaviors when replayed by a live or completed `session` call.
 
-Control: AFK treats retained output as opaque bytes and prints it only after an explicit attach to that session. The user's terminal emulator already processes untrusted remote output during ordinary SSH. AFK does not add a terminal parser or sanitizer.
+Control: AFK treats retained output as opaque bytes and prints it only after an explicit session invocation. The user's terminal emulator already processes untrusted remote output during ordinary SSH. AFK does not add a terminal parser or sanitizer.
 
 ### Sensitive diagnostics
 

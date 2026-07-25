@@ -4,7 +4,7 @@ use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use std::error::Error;
 use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::fs::{MetadataExt, symlink};
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -41,19 +41,19 @@ impl TestHome {
             .output()?)
     }
 
-    fn spawn_stream(&self, script: &str) -> Result<Child, Box<dyn Error>> {
+    fn spawn_session(&self, script: &str) -> Result<Child, Box<dyn Error>> {
         Ok(Command::new(env!("CARGO_BIN_EXE_afk"))
-            .args(["stream", SESSION, "--", "/bin/sh", "-c", script])
+            .args(["session", SESSION, "--", "/bin/sh", "-c", script])
             .env("HOME", &self.path)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()?)
     }
 
-    fn spawn_attach(&self) -> Result<Child, Box<dyn Error>> {
+    fn spawn_session_attachment(&self, creation_script: &str) -> Result<Child, Box<dyn Error>> {
         Ok(Command::new(env!("CARGO_BIN_EXE_afk"))
-            .args(["attach", SESSION])
+            .args(["session", SESSION, "--", "/bin/sh", "-c", creation_script])
             .env("HOME", &self.path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -91,11 +91,11 @@ impl Drop for TestHome {
 }
 
 #[test]
-fn completed_attach_prints_retained_output_and_returns_child_status() -> Result<(), Box<dyn Error>>
+fn completed_session_prints_retained_output_and_returns_child_status() -> Result<(), Box<dyn Error>>
 {
     let home = TestHome::new()?;
     let created = home.run(&[
-        "stream",
+        "session",
         SESSION,
         "--",
         "/bin/sh",
@@ -106,7 +106,7 @@ fn completed_attach_prints_retained_output_and_returns_child_status() -> Result<
     assert!(created.stderr.is_empty());
     home.wait_completed()?;
 
-    let attached = home.run(&["attach", SESSION])?;
+    let attached = home.run(&["session", SESSION])?;
     assert_eq!(attached.status.code(), Some(17));
     assert!(
         attached
@@ -136,10 +136,10 @@ fn completed_attach_prints_retained_output_and_returns_child_status() -> Result<
 }
 
 #[test]
-fn live_attach_replays_history_before_new_output() -> Result<(), Box<dyn Error>> {
+fn live_session_replays_history_before_new_output() -> Result<(), Box<dyn Error>> {
     let home = TestHome::new()?;
     let created = home.run(&[
-        "stream",
+        "session",
         SESSION,
         "--",
         "/bin/sh",
@@ -149,7 +149,7 @@ fn live_attach_replays_history_before_new_output() -> Result<(), Box<dyn Error>>
     assert_eq!(created.status.code(), Some(0));
     thread::sleep(Duration::from_millis(200));
 
-    let mut attached = home.spawn_attach()?;
+    let mut attached = home.spawn_session_attachment("touch \"$HOME/unexpected-live-command\"")?;
     let mut stdout = attached.stdout.take().ok_or("missing attach stdout")?;
     let ready = {
         let mut descriptors = [PollFd::new(&stdout, PollFlags::IN)];
@@ -189,6 +189,7 @@ fn live_attach_replays_history_before_new_output() -> Result<(), Box<dyn Error>>
     assert_eq!(attached.wait()?.code(), Some(19));
     drop(attach_input);
     home.wait_completed()?;
+    assert!(!home.path().join("unexpected-live-command").exists());
     Ok(())
 }
 
@@ -196,7 +197,7 @@ fn live_attach_replays_history_before_new_output() -> Result<(), Box<dyn Error>>
 fn completed_output_is_truncated_to_the_final_256_kib() -> Result<(), Box<dyn Error>> {
     let home = TestHome::new()?;
     let created = home.run(&[
-        "stream",
+        "session",
         SESSION,
         "--",
         "/bin/sh",
@@ -211,7 +212,7 @@ fn completed_output_is_truncated_to_the_final_256_kib() -> Result<(), Box<dyn Er
     assert_eq!(retained.len(), 256 * 1024);
     assert!(retained.ends_with(b"END"));
 
-    let attached = home.run(&["attach", SESSION])?;
+    let attached = home.run(&["session", SESSION])?;
     assert_eq!(attached.status.code(), Some(0));
     assert!(
         attached
@@ -228,13 +229,14 @@ fn completed_output_is_truncated_to_the_final_256_kib() -> Result<(), Box<dyn Er
 }
 
 #[test]
-fn concurrent_stream_creates_only_one_runner() -> Result<(), Box<dyn Error>> {
+fn concurrent_session_calls_create_only_one_runner() -> Result<(), Box<dyn Error>> {
     let home = TestHome::new()?;
-    let mut first = home.spawn_stream("sleep 30")?;
-    let mut second = home.spawn_stream("sleep 30")?;
-    let mut statuses = [first.wait()?.code(), second.wait()?.code()];
-    statuses.sort_unstable();
-    assert_eq!(statuses, [Some(0), Some(1)]);
+    let first = home.spawn_session("sleep 30")?;
+    let second = home.spawn_session("sleep 30")?;
+    let first = first.wait_with_output()?;
+    let second = second.wait_with_output()?;
+    assert_eq!(first.status.code(), Some(0), "first: {:?}", first.stderr);
+    assert_eq!(second.status.code(), Some(0), "second: {:?}", second.stderr);
 
     let listing = home.run(&["sessions", "--json"])?;
     let id_count = listing
@@ -256,7 +258,7 @@ fn symlinked_lock_is_rejected_without_modifying_its_target() -> Result<(), Box<d
     fs::write(&target, b"unchanged")?;
     symlink(&target, runtime.join(format!("{SESSION}.lock")))?;
 
-    let attempted = home.run(&["stream", SESSION, "--", "/bin/sh", "-c", "exit 0"])?;
+    let attempted = home.run(&["session", SESSION, "--", "/bin/sh", "-c", "exit 0"])?;
     assert_eq!(attempted.status.code(), Some(1));
     assert_eq!(fs::read(&target)?, b"unchanged");
     assert!(!runtime.join(format!("{SESSION}.sock")).exists());
@@ -264,14 +266,63 @@ fn symlinked_lock_is_rejected_without_modifying_its_target() -> Result<(), Box<d
 }
 
 #[test]
-fn stream_rejects_a_retained_completed_id() -> Result<(), Box<dyn Error>> {
+fn unreachable_live_record_does_not_start_a_replacement() -> Result<(), Box<dyn Error>> {
     let home = TestHome::new()?;
-    let created = home.run(&["stream", SESSION, "--", "/bin/sh", "-c", "exit 0"])?;
-    assert_eq!(created.status.code(), Some(0));
+    let runtime = home.path().join(".afk/run");
+    fs::create_dir_all(&runtime)?;
+    let metadata = runtime.join(format!("{SESSION}.json"));
+    fs::write(
+        &metadata,
+        format!(
+            "{{\"state\":\"live\",\"session_id\":\"{SESSION}\",\"runner_pid\":1,\"child_pid\":2,\"started_at\":1,\"attached\":false}}"
+        ),
+    )?;
+    fs::set_permissions(&metadata, fs::Permissions::from_mode(0o600))?;
+
+    let marker = home.path().join("unexpected-replacement");
+    let attempted = home.run(&[
+        "session",
+        SESSION,
+        "--",
+        "/bin/sh",
+        "-c",
+        "touch \"$HOME/unexpected-replacement\"",
+    ])?;
+
+    assert_eq!(attempted.status.code(), Some(1));
+    assert_eq!(attempted.stderr, b"error: session unavailable\n");
+    assert!(!marker.exists());
+    assert!(!runtime.join(format!("{SESSION}.sock")).exists());
+    Ok(())
+}
+
+#[test]
+fn completed_id_returns_previous_exit_without_starting_again() -> Result<(), Box<dyn Error>> {
+    let home = TestHome::new()?;
+    let created = home.run(&["session", SESSION, "--", "/bin/sh", "-c", "exit 23"])?;
+    assert!(matches!(created.status.code(), Some(0) | Some(23)));
     home.wait_completed()?;
 
-    let duplicate = home.run(&["stream", SESSION, "--", "/bin/sh", "-c", "exit 0"])?;
-    assert_eq!(duplicate.status.code(), Some(1));
-    assert_eq!(duplicate.stderr, b"error: session already exists\n");
+    let completion_path = home.path().join(".afk/run").join(format!("{SESSION}.json"));
+    let completion = fs::read(&completion_path)?;
+    assert!(
+        completion
+            .windows(b"\"value\":23".len())
+            .any(|part| part == b"\"value\":23")
+    );
+    assert_eq!(fs::metadata(completion_path)?.mode() & 0o777, 0o600);
+
+    let marker = home.path().join("unexpected-restart");
+    let resumed = home.run(&[
+        "session",
+        SESSION,
+        "--",
+        "/bin/sh",
+        "-c",
+        "touch \"$HOME/unexpected-restart\"",
+    ])?;
+    assert_eq!(resumed.status.code(), Some(23));
+    assert!(resumed.stderr.is_empty());
+    assert!(!marker.exists());
     Ok(())
 }

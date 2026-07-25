@@ -11,9 +11,9 @@ AFK CLI is not tied to the AFK app. Any SSH client that can run a remote command
 ```bash
 SESSION_ID="$(openssl rand -hex 16)"
 
-ssh -t host.example afk stream "$SESSION_ID"
+ssh -t host.example afk session "$SESSION_ID"
 # The SSH connection is interrupted, but the remote shell keeps running.
-ssh -t host.example afk attach "$SESSION_ID"
+ssh -t host.example afk session "$SESSION_ID"
 ```
 
 > [!WARNING]
@@ -51,16 +51,16 @@ AFK app or another SSH client
         shell or command
 ```
 
-`afk stream` creates one runner, one PTY, and one shell or command for a session ID. The attachment belongs to the current SSH connection; the runner does not.
+`afk session` creates one runner, one PTY, and one shell or command when the ID is new. When the ID is already live, the same command attaches to its runner instead. The attachment belongs to the current SSH connection; the runner does not.
 
 When SSH disconnects:
 
 1. the attachment ends;
 2. the runner continues draining the PTY so the process cannot block on terminal output;
 3. up to 256 KiB of recent raw output remains available in memory;
-4. a new `afk attach` reconnects to the runner and receives that tail before live output.
+4. a new `afk session` reconnects to the runner and receives that tail before live output.
 
-When the process finishes, AFK stores only the final bounded output tail and safe completion metadata for 24 hours. It does not persist a separate input log, argv, environment values, or a reconstructed terminal screen.
+When the process finishes, AFK rewrites its owner-only per-session metadata file as a previous-session record containing the exit code or signal. It also stores only the final bounded output tail. Both are retained for 24 hours so another `afk session` call can return the prior result without restarting the command. AFK does not persist a separate input log, argv, environment values, or a reconstructed terminal screen.
 
 There is no shared AFK server and no machine-wide daemon. Each live session has its own user-owned runner, and that runner exits when the session completes.
 
@@ -94,36 +94,33 @@ Release checksums, provenance attestations, supported asset names, and verificat
 ## Commands
 
 ```bash
-afk stream SESSION_ID [-- COMMAND [ARG...]]
-afk attach SESSION_ID
+afk session SESSION_ID [-- COMMAND [ARG...]]
 afk sessions [--json]
 afk stop SESSION_ID
 ```
 
 Session IDs are exactly 32 lowercase hexadecimal characters. The client chooses the ID before creating a session; the AFK app is intended to manage this automatically.
 
-### Start and attach
+### Start or reconnect
 
 ```bash
 SESSION_ID="$(openssl rand -hex 16)"
-ssh -t host.example afk stream "$SESSION_ID"
+ssh -t host.example afk session "$SESSION_ID"
 ```
 
-With no command, `stream` starts the account's default shell. To run a specific command, place its argv after `--`:
+With no command, a new session starts the account's default shell. To run a specific command, place its argv after `--`:
 
 ```bash
-ssh -t host.example afk stream "$SESSION_ID" -- htop
+ssh -t host.example afk session "$SESSION_ID" -- htop
 ```
 
-`stream` never replaces an existing live or recently completed session with the same ID.
-
-### Reattach
+Run the same command again to reconnect:
 
 ```bash
-ssh -t host.example afk attach "$SESSION_ID"
+ssh -t host.example afk session "$SESSION_ID"
 ```
 
-`attach` never creates a replacement shell. If the session is live, it replays the bounded raw tail and continues with live terminal I/O. If the process has completed recently, it prints the retained tail and reports the recorded exit status.
+For a live ID, AFK ignores creation argv and attaches to the existing process. For a recently completed ID, AFK prints the retained tail and completion summary, returns the recorded exit status, and does not start the supplied command again. A live record whose runner cannot be reached fails closed rather than silently creating a replacement shell.
 
 ### List and stop sessions
 

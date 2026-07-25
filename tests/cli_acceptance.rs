@@ -78,6 +78,24 @@ fn cli_002_invalid_arguments_are_bounded_and_redacted() -> Result<(), Box<dyn Er
 }
 
 #[test]
+fn removed_stream_and_attach_commands_are_rejected() -> Result<(), Box<dyn Error>> {
+    const SESSION: &str = "00112233445566778899aabbccddeeff";
+
+    let home = TestHome::new()?;
+    for command in ["stream", "attach"] {
+        let output = run_afk(&home, &[command, SESSION])?;
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            output.stderr,
+            b"error: unsupported command or option\nTry 'afk --help' for usage.\n"
+        );
+    }
+    assert!(!home.path().join(".afk").exists());
+    Ok(())
+}
+
+#[test]
 fn help_describes_session_commands() -> Result<(), Box<dyn Error>> {
     let home = TestHome::new()?;
     let output = run_afk(&home, &["--help"])?;
@@ -94,8 +112,8 @@ fn help_describes_session_commands() -> Result<(), Box<dyn Error>> {
     assert!(
         output
             .stdout
-            .windows(b"afk stream SESSION_ID".len())
-            .any(|part| part == b"afk stream SESSION_ID")
+            .windows(b"afk session SESSION_ID".len())
+            .any(|part| part == b"afk session SESSION_ID")
     );
     Ok(())
 }

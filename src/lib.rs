@@ -55,8 +55,7 @@ const HELP: &str = "AFK CLI keeps a remote terminal process alive across SSH dis
 Usage:\n\
     afk --help\n\
     afk --version\n\
-    afk stream SESSION_ID [-- COMMAND [ARG...]]\n\
-    afk attach SESSION_ID\n\
+    afk session SESSION_ID [-- COMMAND [ARG...]]\n\
     afk sessions [--json]\n\
     afk stop SESSION_ID\n\
 \n\
@@ -83,8 +82,7 @@ where
         Ok(Command::Help) => write_static(&mut stdout, HELP),
         Ok(Command::Version) => write_version(&mut stdout),
         Ok(
-            command @ (Command::Stream { .. }
-            | Command::Attach { .. }
+            command @ (Command::Session { .. }
             | Command::Sessions { .. }
             | Command::Stop { .. }
             | Command::HiddenRunner { .. }
@@ -107,10 +105,9 @@ fn run_session_command(
     stderr: &mut impl Write,
 ) -> ExitStatus {
     let result = match command {
-        Command::Stream { session, command } => session::stream(session, &command, stdout)
-            .map(|status| ExitStatus::Child(status.status_code())),
-        Command::Attach { session } => {
-            session::attach(session, stdout).map(|status| ExitStatus::Child(status.status_code()))
+        Command::Session { session, command } => {
+            session::connect_or_start(session, &command, stdout)
+                .map(|status| ExitStatus::Child(status.status_code()))
         }
         Command::Sessions { json } => session::sessions(json, stdout).map(|()| ExitStatus::Success),
         Command::Stop { session } => session::stop(session).map(|()| ExitStatus::Success),
@@ -140,10 +137,10 @@ fn run_session_command(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn write_session_error(stderr: &mut impl Write, kind: std::io::ErrorKind) -> ExitStatus {
     let message = match kind {
-        std::io::ErrorKind::AlreadyExists => "error: session already exists\n",
         std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => {
             "error: session not found\n"
         }
+        std::io::ErrorKind::ConnectionAborted => "error: session unavailable\n",
         std::io::ErrorKind::PermissionDenied => "error: unsafe session runtime entry\n",
         _ => "error: session operation failed\n",
     };

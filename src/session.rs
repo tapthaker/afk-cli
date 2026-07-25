@@ -8,18 +8,38 @@ use rustix::fd::AsFd;
 use std::ffi::OsString;
 use std::io::{self, Write};
 
-pub(crate) fn stream(
+pub(crate) fn connect_or_start(
     session: SessionId,
     command: &[OsString],
     output: &mut impl Write,
 ) -> io::Result<ProcessExit> {
+    let connect_error = match attach::attach(session, output) {
+        Ok(status) => return Ok(status),
+        Err(error) => error,
+    };
+    if !matches!(
+        connect_error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+    ) {
+        return Err(connect_error);
+    }
+
+    // A live record whose runner cannot be reached is ambiguous. Fail closed
+    // instead of silently replacing a session that the caller meant to resume.
+    if Registry::open()?.read_metadata(session)?.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "recorded session runner is unavailable",
+        ));
+    }
+
     let stdin = std::io::stdin();
     let (rows, columns) = window_size(stdin.as_fd()).unwrap_or((24, 80));
-    runner::launch_runner(session, command, rows, columns)?;
-    attach::attach(session, output)
-}
-
-pub(crate) fn attach(session: SessionId, output: &mut impl Write) -> io::Result<ProcessExit> {
+    match runner::launch_runner(session, command, rows, columns) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
     attach::attach(session, output)
 }
 

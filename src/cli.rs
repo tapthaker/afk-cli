@@ -6,12 +6,9 @@ use std::ffi::{OsStr, OsString};
 pub(crate) enum Command {
     Help,
     Version,
-    Stream {
+    Session {
         session: SessionId,
         command: Vec<OsString>,
-    },
-    Attach {
-        session: SessionId,
     },
     Sessions {
         json: bool,
@@ -52,8 +49,7 @@ where
     match first.as_encoded_bytes() {
         b"--help" | b"-h" if arguments.len() == 1 => Ok(Command::Help),
         b"--version" | b"-V" if arguments.len() == 1 => Ok(Command::Version),
-        b"stream" => parse_stream(&arguments[1..]),
-        b"attach" => parse_session_command(&arguments[1..], |session| Command::Attach { session }),
+        b"session" => parse_session(&arguments[1..]),
         b"sessions" => parse_sessions(&arguments[1..]),
         b"stop" => parse_session_command(&arguments[1..], |session| Command::Stop { session }),
         b"__runner" => {
@@ -64,7 +60,7 @@ where
     }
 }
 
-fn parse_stream(arguments: &[OsString]) -> Result<Command, ParseError> {
+fn parse_session(arguments: &[OsString]) -> Result<Command, ParseError> {
     let Some(session) = arguments.first() else {
         return Err(ParseError::InvalidArguments);
     };
@@ -79,7 +75,7 @@ fn parse_stream(arguments: &[OsString]) -> Result<Command, ParseError> {
         }
         _ => return Err(ParseError::InvalidArguments),
     };
-    Ok(Command::Stream { session, command })
+    Ok(Command::Session { session, command })
 }
 
 fn parse_session_command(
@@ -149,20 +145,19 @@ mod tests {
         assert!(session.is_ok());
         let session = session.unwrap_or_else(|_| unreachable!());
         assert_eq!(
-            parse(["stream", SESSION]),
-            Ok(Command::Stream {
+            parse(["session", SESSION]),
+            Ok(Command::Session {
                 session,
                 command: Vec::new()
             })
         );
         assert_eq!(
-            parse(["stream", SESSION, "--", "/bin/echo", "hello"]),
-            Ok(Command::Stream {
+            parse(["session", SESSION, "--", "/bin/echo", "hello"]),
+            Ok(Command::Session {
                 session,
                 command: vec![OsString::from("/bin/echo"), OsString::from("hello")],
             })
         );
-        assert_eq!(parse(["attach", SESSION]), Ok(Command::Attach { session }));
         assert_eq!(parse(["sessions"]), Ok(Command::Sessions { json: false }));
         assert_eq!(
             parse(["sessions", "--json"]),
@@ -182,18 +177,26 @@ mod tests {
             parse(["--version", "unexpected"]),
             Err(ParseError::UnsupportedCommand)
         );
-        assert_eq!(parse(["stream"]), Err(ParseError::InvalidArguments));
+        assert_eq!(parse(["session"]), Err(ParseError::InvalidArguments));
         assert_eq!(
-            parse(["stream", SESSION, "--"]),
+            parse(["session", SESSION, "--"]),
             Err(ParseError::InvalidArguments)
         );
         assert_eq!(
-            parse(["stream", SESSION, "/bin/sh"]),
+            parse(["session", SESSION, "/bin/sh"]),
             Err(ParseError::InvalidArguments)
         );
         assert_eq!(
-            parse(["attach", "not-an-id"]),
+            parse(["session", "not-an-id"]),
             Err(ParseError::InvalidSessionId)
+        );
+        assert_eq!(
+            parse(["stream", SESSION]),
+            Err(ParseError::UnsupportedCommand)
+        );
+        assert_eq!(
+            parse(["attach", SESSION]),
+            Err(ParseError::UnsupportedCommand)
         );
         assert_eq!(
             parse(["sessions", "--other"]),
@@ -204,7 +207,7 @@ mod tests {
     #[test]
     fn enforces_command_count_and_byte_bounds() {
         let mut too_many = vec![
-            OsString::from("stream"),
+            OsString::from("session"),
             OsString::from(SESSION),
             OsString::from("--"),
         ];
@@ -214,7 +217,7 @@ mod tests {
         let too_large = "x".repeat(MAX_COMMAND_BYTES + 1);
         assert_eq!(
             parse([
-                OsString::from("stream"),
+                OsString::from("session"),
                 OsString::from(SESSION),
                 OsString::from("--"),
                 OsString::from(too_large)

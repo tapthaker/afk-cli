@@ -22,12 +22,13 @@ The current package implements the Linux and macOS session lifecycle, bounded ra
 | --- | --- | --- |
 | CLI-001 | `afk --version` succeeds without creating runtime files. | Step 0 |
 | CLI-002 | Invalid arguments return exit code 2 and bounded stderr without echoing the argument. | Step 0 |
-| CLI-003 | `stream` requires exactly one valid session ID, accepts optional argv after `--`, and rejects `--detach`. | Step 1A/2A |
-| CLI-004 | Explicit command arguments, including shell metacharacters, are passed literally without `sh -c`. | Step 2A |
-| CLI-005 | `attach` and `stop` reject malformed or missing session IDs. | Step 1A/3 |
-| CLI-006 | A failed `attach` never creates a process or runtime entry. | Step 2B |
-| CLI-007 | `stream` returns `SessionExists` for a live or retained completed ID. | Step 2A/3 |
-| CLI-008 | Attaching to a completed session prints the retained raw output tail, truncation marker when applicable, and completion summary, then returns the recorded status. | Step 3 |
+| CLI-003 | `session` requires exactly one valid session ID, accepts optional creation argv after `--`, and rejects `--detach`. | Step 1A/2A |
+| CLI-004 | Explicit command arguments, including shell metacharacters, are passed literally without `sh -c` when a session is created. | Step 2A |
+| CLI-005 | `session` and `stop` reject malformed or missing session IDs. | Step 1A/3 |
+| CLI-006 | The removed `stream` and `attach` commands are rejected. | Step 2B |
+| CLI-007 | Repeated and concurrent `session` calls for a live ID attach to one runner and never execute later creation argv. | Step 2A/2B |
+| CLI-008 | Calling `session` for a completed ID prints the retained raw output tail, truncation marker when applicable, and completion summary, then returns the recorded status without restarting it. | Step 3 |
+| CLI-009 | An unreachable live metadata record fails closed without starting a replacement process. | Step 2B/3 |
 
 ### Local IPC and runtime files
 
@@ -39,7 +40,7 @@ The current package implements the Linux and macOS session lifecycle, bounded ra
 | IPC-004 | Unknown kinds, wrong fixed payload lengths, and invalid state transitions are rejected. | Step 1A |
 | FS-001 | Runtime root and session files have expected ownership and restrictive modes. | Step 1B |
 | FS-002 | Symlinked root, lock, metadata, and socket entries are rejected without modifying their targets. | Step 1B |
-| FS-003 | Concurrent create requests for one ID produce one runner. | Step 1B/2A |
+| FS-003 | Concurrent `session` calls for one unseen ID produce one runner. | Step 1B/2A |
 | FS-004 | A stale PID cannot authorize cleanup or signaling. | Step 1B/3 |
 | FS-005 | Metadata stays within its limit and excludes terminal, argument, and environment contents. | Step 1B/3 |
 | FS-006 | Completed metadata records finish time, exit code or signal, retained byte count, and truncation without containing terminal bytes. | Step 1B/3 |

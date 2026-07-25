@@ -117,7 +117,7 @@ var=inherited-ok
 
 ### Decision
 
-The runner and child inherit cwd and environment from `afk stream`. AFK does not persist or log either. Explicit argv is executed without `sh -c`.
+The runner and child inherit cwd and environment from the creating `afk session`. AFK does not persist or log either. Explicit argv is executed without `sh -c`.
 
 ## 5. Threads and event loop
 
@@ -197,12 +197,12 @@ The dependency tree contained `rustix`, `signal-hook`, and their small permissiv
 
 ## 10. Product decisions confirmed separately
 
-- `stream` is create-only and returns `SessionExists` for a live or retained completed ID.
+- `session` is the single create-or-connect command: it creates unseen IDs, attaches to live IDs, and returns retained completed outcomes without restarting them;
+- concurrent calls converge on one runner, while an unreachable live record fails closed instead of being replaced;
 - default-shell and explicit-command sessions inherit cwd and environment;
-- child exit code or signal is sent to an active attachment and persisted as bounded completion metadata;
-- attaching to retained completed metadata reports the outcome without creating a process;
+- child exit code or signal is sent to an active attachment and persisted as bounded previous-session metadata;
 - a later product decision added a 256 KiB in-memory raw PTY output tail, replayed on every live attachment and persisted only after observed process completion;
-- attaching to a completed session prints that raw tail, a truncation marker when needed, and the completion summary;
+- invoking `session` for a completed ID prints that raw tail, a truncation marker when needed, and the completion summary;
 - no separate terminal-input stream is persisted.
 
 Completed output and metadata retention is initially 24 hours and is cleaned lazily by later AFK commands.
