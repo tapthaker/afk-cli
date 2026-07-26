@@ -136,6 +136,31 @@ fn completed_session_prints_retained_output_and_returns_child_status() -> Result
 }
 
 #[test]
+fn newly_created_session_forwards_output_before_any_input() -> Result<(), Box<dyn Error>> {
+    let home = TestHome::new()?;
+    let mut attached = home.spawn_session_attachment("printf 'synthetic-ready'; sleep 30")?;
+    let mut stdout = attached.stdout.take().ok_or("missing attach stdout")?;
+    let ready = {
+        let mut descriptors = [PollFd::new(&stdout, PollFlags::IN)];
+        poll(
+            &mut descriptors,
+            Some(&Timespec {
+                tv_sec: 5,
+                tv_nsec: 0,
+            }),
+        )?
+    };
+    assert_eq!(ready, 1, "initial child output timed out before user input");
+    let mut output = vec![0_u8; b"synthetic-ready".len()];
+    stdout.read_exact(&mut output)?;
+    assert_eq!(output, b"synthetic-ready");
+
+    assert_eq!(home.run(&["stop", SESSION])?.status.code(), Some(0));
+    let _ = attached.wait();
+    Ok(())
+}
+
+#[test]
 fn live_session_replays_history_before_new_output() -> Result<(), Box<dyn Error>> {
     let home = TestHome::new()?;
     let created = home.run(&[

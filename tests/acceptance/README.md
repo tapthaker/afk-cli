@@ -66,6 +66,7 @@ The current package implements the Linux and macOS session lifecycle, bounded ra
 | PROC-014 | Output above 256 KiB retains the final bytes exactly and records that earlier output was truncated. | Step 3 |
 | PROC-015 | Every live attach receives the current raw tail before subsequently read PTY output. | Step 2B |
 | PROC-016 | A wrapped tail emits a truncation marker, and repeated attach may replay previously delivered bytes without introducing gaps in runner read order. | Step 2B |
+| PROC-017 | A newly created session forwards and flushes prompt or partial output before receiving any user input, even when the bytes contain no newline. | Step 2A |
 
 ### macOS continuity
 

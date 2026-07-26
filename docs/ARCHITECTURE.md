@@ -168,6 +168,7 @@ Socket closure without an exit record represents attachment loss. No acknowledge
 The runner uses one nonblocking event loop for the inner PTY, listener, and active attachment.
 
 - PTY reads never wait for an attachment write.
+- The attachment flushes every received output batch so prompts and partial output without a newline are visible immediately.
 - Every PTY output byte is added to a 256 KiB in-memory tail ring.
 - With no attachment, output is still drained into that bounded ring.
 - On attach, the runner snapshots the tail into the attachment queue before reading more PTY output, preserving replay-before-live ordering.

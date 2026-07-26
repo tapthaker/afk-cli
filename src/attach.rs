@@ -119,9 +119,13 @@ fn attach_live(mut stream: UnixStream, output: &mut impl Write) -> io::Result<Pr
         }
         if socket_event.intersects(PollFlags::IN | PollFlags::HUP | PollFlags::ERR) {
             let records = read_records(&mut stream, &mut decoder)?;
+            let mut wrote_output = false;
             for record in records {
                 match record {
-                    Record::Output(bytes) => output.write_all(&bytes)?,
+                    Record::Output(bytes) => {
+                        output.write_all(&bytes)?;
+                        wrote_output = true;
+                    }
                     Record::Exit(status) => {
                         output.flush()?;
                         drop(terminal);
@@ -134,6 +138,12 @@ fn attach_live(mut stream: UnixStream, output: &mut impl Write) -> io::Result<Pr
                         ));
                     }
                 }
+            }
+            if wrote_output {
+                // `StdoutLock` is line-buffered on a terminal. Prompts and partial output
+                // commonly contain no newline, so flush every received output batch instead
+                // of waiting for later input or process exit to make those bytes visible.
+                output.flush()?;
             }
         }
         if stdin_closed && socket_output.is_empty() {
