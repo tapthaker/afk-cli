@@ -264,7 +264,7 @@ jobs:
           codesign --display --verbose=4 "$binary" 2> "$signature_details"
           grep -F 'Authority=Developer ID Application:' "$signature_details"
           grep -E '^Timestamp=.+' "$signature_details"
-          grep -E '^flags=.*runtime' "$signature_details"
+          grep -E '^CodeDirectory .*flags=.*runtime' "$signature_details"
 
           ditto -c -k --keepParent "$binary" "$archive_path"
           xcrun notarytool submit "$archive_path" \
