@@ -223,6 +223,8 @@ jobs:
           security create-keychain -p "$keychain_password" "$keychain_path"
           security set-keychain-settings -lut 21600 "$keychain_path"
           security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -d user -s "$keychain_path"
           security import "$certificate_path" \
             -k "$keychain_path" \
             -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" \
@@ -239,7 +241,7 @@ jobs:
           fi
 
           identities=$(
-            security find-identity -v -p codesigning "$keychain_path" |
+            security find-identity -v -p codesigning |
               awk '/Developer ID Application:/ { print $2 }'
           )
           identity_count=$(printf '%s\n' "$identities" | awk 'NF { count++ } END { print count + 0 }')
