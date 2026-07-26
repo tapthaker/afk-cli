@@ -180,7 +180,7 @@ afk-macos-x86_64
 afk-macos-aarch64
 ```
 
-All four artifacts implement the same session lifecycle. Releases include SHA-256 checksums, an SPDX SBOM, and GitHub build-provenance attestations.
+All four artifacts implement the same session lifecycle. macOS artifacts are Developer ID signed and Apple-notarized. Releases include SHA-256 checksums, an SPDX SBOM, and GitHub build-provenance attestations.
 
 ## Documentation
 

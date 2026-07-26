@@ -232,6 +232,8 @@ Controls before release:
 - SBOM and license inventory;
 - `PT_INTERP` and `DT_NEEDED` inspection for musl artifacts;
 - Mach-O architecture inspection for macOS artifacts;
+- Developer ID signing with hardened runtime and trusted timestamps;
+- Apple notarization and Gatekeeper assessment of both macOS artifacts;
 - direct binary release assets with checksums and build-provenance attestations;
 - clean-image execution tests;
 - atomic installation.
@@ -287,6 +289,7 @@ Before a public release:
 - abrupt OpenSSH TCP loss is tested end to end on supported hosts;
 - both musl artifacts have no dynamic dependencies;
 - native macOS session lifecycle tests pass and both Mach-O architectures build;
+- both macOS artifacts are Developer ID signed, accepted by Apple's notary service, and accepted by Gatekeeper;
 - clean-image execution succeeds;
 - release checksums and provenance are verifiable;
 - the threat model is reconciled with the implementation.
