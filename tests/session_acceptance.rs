@@ -136,11 +136,13 @@ fn completed_session_prints_retained_output_and_returns_child_status() -> Result
 }
 
 #[test]
-fn newly_created_session_forwards_output_before_any_input() -> Result<(), Box<dyn Error>> {
+fn partial_and_delayed_output_flush_without_any_input() -> Result<(), Box<dyn Error>> {
     let home = TestHome::new()?;
-    let mut attached = home.spawn_session_attachment("printf 'synthetic-ready'; sleep 30")?;
+    let mut attached =
+        home.spawn_session_attachment("printf 'a'; sleep 1; printf 'synthetic-delayed'; sleep 30")?;
     let mut stdout = attached.stdout.take().ok_or("missing attach stdout")?;
-    let ready = {
+
+    let first_ready = {
         let mut descriptors = [PollFd::new(&stdout, PollFlags::IN)];
         poll(
             &mut descriptors,
@@ -150,10 +152,31 @@ fn newly_created_session_forwards_output_before_any_input() -> Result<(), Box<dy
             }),
         )?
     };
-    assert_eq!(ready, 1, "initial child output timed out before user input");
-    let mut output = vec![0_u8; b"synthetic-ready".len()];
-    stdout.read_exact(&mut output)?;
-    assert_eq!(output, b"synthetic-ready");
+    assert_eq!(
+        first_ready, 1,
+        "first partial output timed out before user input"
+    );
+    let mut first = [0_u8; 1];
+    stdout.read_exact(&mut first)?;
+    assert_eq!(&first, b"a");
+
+    let delayed_ready = {
+        let mut descriptors = [PollFd::new(&stdout, PollFlags::IN)];
+        poll(
+            &mut descriptors,
+            Some(&Timespec {
+                tv_sec: 5,
+                tv_nsec: 0,
+            }),
+        )?
+    };
+    assert_eq!(
+        delayed_ready, 1,
+        "delayed partial output timed out without user input"
+    );
+    let mut delayed = vec![0_u8; b"synthetic-delayed".len()];
+    stdout.read_exact(&mut delayed)?;
+    assert_eq!(delayed, b"synthetic-delayed");
 
     assert_eq!(home.run(&["stop", SESSION])?.status.code(), Some(0));
     let _ = attached.wait();
