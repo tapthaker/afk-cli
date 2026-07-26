@@ -15,9 +15,9 @@ afk-macos-aarch64
 
 `SHA256SUMS` covers those four binaries, and `SBOM.spdx.json` inventories the tagged source dependencies. GitHub may also display its automatically generated source-code archives; they are not AFK binary artifacts.
 
-The Linux binaries are static musl ELF executables and are checked for the absence of `PT_INTERP` and `DT_NEEDED`. The macOS binaries are signed with a Developer ID Application certificate, use the hardened runtime and a trusted timestamp, and are submitted to Apple's notary service. The release fails unless Apple returns an `Accepted` result and Gatekeeper accepts each signed binary.
+The Linux binaries are static musl ELF executables and are checked for the absence of `PT_INTERP` and `DT_NEEDED`. The macOS binaries are signed with a Developer ID Application certificate, use the hardened runtime and a trusted timestamp, and are submitted to Apple's notary service. The release fails unless the signature passes strict verification and Apple returns an `Accepted` notarization result.
 
-All four binaries implement AFK's session lifecycle. Linux uses static musl artifacts; macOS uses native Mach-O artifacts for Intel and Apple Silicon. Apple does not support stapling a notarization ticket to a standalone command-line executable, so Gatekeeper retrieves the ticket by the signed binary's hash when it assesses a downloaded asset.
+All four binaries implement AFK's session lifecycle. Linux uses static musl artifacts; macOS uses native Mach-O artifacts for Intel and Apple Silicon. Apple does not support stapling a notarization ticket to a standalone command-line executable, so Gatekeeper can retrieve the ticket by the signed binary's hash. `spctl` is not used as a release gate because its command-line assessment rejects valid standalone executables as “not an app”; strict `codesign` verification and the accepted notarization response are the applicable checks.
 
 ## Creating a release
 
@@ -39,7 +39,7 @@ git push origin v0.1.0
 2. runs formatting, lint, tests, acceptance tooling, and Cargo Deny;
 3. creates a draft GitHub Release;
 4. builds and verifies all four target binaries;
-5. Developer ID signs, notarizes, and Gatekeeper-assesses both macOS binaries;
+5. Developer ID signs, strictly verifies, and notarizes both macOS binaries;
 6. creates GitHub build-provenance attestations for each binary;
 7. uploads each binary directly, without wrapping it in a zip or tar archive;
 8. downloads and verifies the complete asset set;
@@ -69,7 +69,7 @@ base64 -i DeveloperIDApplication.p12 | tr -d '\n'
 base64 -i AuthKey_KEYID.p8 | tr -d '\n'
 ```
 
-Configure these values as repository Actions secrets; never commit signing credentials. A missing credential, rejected notarization, or failed Gatekeeper assessment leaves the GitHub release in draft state.
+Configure these values as repository Actions secrets; never commit signing credentials. A missing credential, invalid signature, or rejected notarization leaves the GitHub release in draft state.
 
 ## Verifying a download
 

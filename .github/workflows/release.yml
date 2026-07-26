@@ -209,9 +209,10 @@ jobs:
           keychain_password=$(openssl rand -base64 32)
           archive_path="$RUNNER_TEMP/${{ matrix.asset }}.zip"
           notarization_result="$RUNNER_TEMP/notarization-result.json"
+          signature_details="$RUNNER_TEMP/signature-details.txt"
 
           cleanup() {
-            rm -f "$certificate_path" "$api_key_path" "$archive_path" "$notarization_result"
+            rm -f "$certificate_path" "$api_key_path" "$archive_path" "$notarization_result" "$signature_details"
             security delete-keychain "$keychain_path" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
@@ -260,6 +261,10 @@ jobs:
             --sign "$signing_identity" \
             "$binary"
           codesign --verify --strict --verbose=2 "$binary"
+          codesign --display --verbose=4 "$binary" 2> "$signature_details"
+          grep -F 'Authority=Developer ID Application:' "$signature_details"
+          grep -E '^Timestamp=.+' "$signature_details"
+          grep -E '^flags=.*runtime' "$signature_details"
 
           ditto -c -k --keepParent "$binary" "$archive_path"
           xcrun notarytool submit "$archive_path" \
@@ -279,10 +284,6 @@ jobs:
               raise SystemExit(f"notarization was not accepted: {result.get('status', 'missing status')}")
           print(f"notarization accepted: {result.get('id', 'unknown submission')}")
           PY
-
-          # Apple cannot staple tickets to standalone command-line executables.
-          # Gatekeeper retrieves the accepted ticket by the signed binary's hash.
-          spctl --assess --type execute --verbose=4 "$binary"
 
       - name: Verify binary architecture
         shell: bash

@@ -60,7 +60,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("notarytool submit", workflow)
         self.assertIn("--wait", workflow)
         self.assertIn('result.get("status") != "Accepted"', workflow)
-        self.assertIn("spctl --assess --type execute", workflow)
+        self.assertIn("codesign --verify --strict", workflow)
+        self.assertIn("Authority=Developer ID Application:", workflow)
+        self.assertNotIn("spctl --assess", workflow)
         self.assertNotIn("--sign -", workflow)
         self.assertNotIn("--timestamp=none", workflow)
 
