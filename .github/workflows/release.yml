@@ -227,11 +227,16 @@ jobs:
             -k "$keychain_path" \
             -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" \
             -T /usr/bin/codesign
-          security set-key-partition-list \
+          # Some macOS runners update the imported key's ACL successfully but
+          # return errSecItemNotFound while walking unrelated keychain records.
+          # The identity lookup and codesign below remain the authoritative checks.
+          if ! security set-key-partition-list \
             -S apple-tool:,apple: \
             -s \
             -k "$keychain_password" \
-            "$keychain_path"
+            "$keychain_path" >/dev/null 2>&1; then
+            echo "key partition update returned a non-zero status; verifying the identity directly" >&2
+          fi
 
           identities=$(
             security find-identity -v -p codesigning "$keychain_path" |

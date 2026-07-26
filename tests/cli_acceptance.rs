@@ -46,7 +46,7 @@ fn cli_001_version_is_side_effect_free() -> Result<(), Box<dyn Error>> {
     let output = run_afk(&home, &["--version"])?;
 
     assert_eq!(output.status.code(), Some(0));
-    assert_eq!(output.stdout, b"afk 0.1.1\n");
+    assert_eq!(output.stdout, b"afk 0.1.2\n");
     assert!(output.stderr.is_empty());
     assert!(!home.path().join(".afk").exists());
     assert_eq!(fs::read_dir(home.path())?.count(), 0);
