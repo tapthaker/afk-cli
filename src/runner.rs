@@ -124,7 +124,7 @@ fn start_runner(session: SessionId, config: StartupConfig) -> io::Result<()> {
     let files = registry.bind_session(session)?;
     let mut trace = config
         .trace
-        .then(|| Trace::create(&files.paths.trace))
+        .then(|| Trace::create(&files.paths.trace, "runner"))
         .transpose()?;
     trace_event(&mut trace, "runner_started");
     let (master, slave) = create_pty(config.rows, config.columns)?;
@@ -187,7 +187,7 @@ fn run_event_loop(
 
     let process_exit = loop {
         let had_attachment = active.is_some();
-        drain_pty(&mut master, &mut tail, &mut active)?;
+        drain_pty(&mut master, &mut tail, &mut active, &mut trace)?;
         if had_attachment && active.is_none() {
             trace_event(&mut trace, "attachment_output_queue_full");
             registry.write_metadata(
@@ -235,24 +235,34 @@ fn run_event_loop(
             if error == rustix::io::Errno::INTR {
                 continue;
             }
-            return Err(io::Error::from(error));
+            let error = io::Error::from(error);
+            trace_io_error(&mut trace, "runner_poll_failed", &error);
+            return Err(error);
         }
         let events: Vec<PollFlags> = descriptors.iter().map(PollFd::revents).collect();
         drop(descriptors);
 
-        if events[0].contains(PollFlags::OUT) && pty_input.flush(&mut master).is_err() {
-            trace_event(&mut trace, "pty_input_write_failed");
-            active = None;
+        if events[0].contains(PollFlags::OUT) {
+            if let Err(error) = pty_input.flush(&mut master) {
+                trace_io_error(&mut trace, "pty_input_write_failed", &error);
+                active = None;
+            }
         }
         if let Some(index) = active_index {
             let event = events[index];
-            if event.contains(PollFlags::OUT)
-                && active.as_mut().is_some_and(|connection| {
-                    connection.output.flush(&mut connection.stream).is_err()
-                })
-            {
-                trace_event(&mut trace, "attachment_write_failed");
-                active = None;
+            if event.contains(PollFlags::HUP) {
+                trace_event(&mut trace, "attachment_poll_hangup");
+            }
+            if event.contains(PollFlags::ERR) {
+                trace_event(&mut trace, "attachment_poll_error");
+            }
+            if event.contains(PollFlags::OUT) {
+                if let Some(connection) = active.as_mut() {
+                    if let Err(error) = connection.output.flush(&mut connection.stream) {
+                        trace_io_error(&mut trace, "attachment_write_failed", &error);
+                        active = None;
+                    }
+                }
             }
             if active.is_some() && event.intersects(PollFlags::IN | PollFlags::HUP | PollFlags::ERR)
             {
@@ -263,8 +273,8 @@ fn run_event_loop(
                             active = None;
                         }
                     }
-                    Err(_) => {
-                        trace_event(&mut trace, "attachment_read_failed");
+                    Err(error) => {
+                        trace_io_error(&mut trace, "attachment_read_failed", &error);
                         active = None;
                     }
                 }
@@ -277,7 +287,7 @@ fn run_event_loop(
             }
         }
         if events[1].contains(PollFlags::IN) {
-            accept_candidate(&files, &mut candidate)?;
+            accept_candidate(&files, &mut candidate, &mut trace)?;
         }
         if let Some(index) = candidate_index {
             if events[index].intersects(PollFlags::IN | PollFlags::HUP | PollFlags::ERR) {
@@ -317,8 +327,8 @@ fn run_event_loop(
                         }
                     }
                     Ok(_) => {}
-                    Err(_) => {
-                        trace_event(&mut trace, "candidate_read_failed");
+                    Err(error) => {
+                        trace_io_error(&mut trace, "candidate_read_failed", &error);
                         candidate = None;
                     }
                 }
@@ -327,11 +337,13 @@ fn run_event_loop(
         if stop_requested {
             drop(master);
             let status = process_exit(stop_child(child)?);
+            trace_process_exit(&mut trace, status);
             return complete_session(session, registry, files, tail, active, started_at, status);
         }
     };
 
-    drain_pty(&mut master, &mut tail, &mut active)?;
+    drain_pty(&mut master, &mut tail, &mut active, &mut trace)?;
+    trace_process_exit(&mut trace, process_exit);
     complete_session(
         session,
         registry,
@@ -343,14 +355,23 @@ fn run_event_loop(
     )
 }
 
-fn accept_candidate(files: &SessionFiles, candidate: &mut Option<Connection>) -> io::Result<()> {
+fn accept_candidate(
+    files: &SessionFiles,
+    candidate: &mut Option<Connection>,
+    trace: &mut Option<Trace>,
+) -> io::Result<()> {
     loop {
         match files.listener.accept() {
             Ok((stream, _)) => {
                 if peer_uid(&stream)? != getuid().as_raw() {
+                    trace_event(trace, "candidate_peer_rejected");
                     continue;
                 }
                 stream.set_nonblocking(true)?;
+                if candidate.is_some() {
+                    trace_event(trace, "candidate_replaced");
+                }
+                trace_event(trace, "candidate_accepted");
                 *candidate = Some(Connection::new(stream));
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
@@ -363,12 +384,16 @@ fn drain_pty(
     master: &mut File,
     tail: &mut OutputTail,
     active: &mut Option<Connection>,
+    trace: &mut Option<Trace>,
 ) -> io::Result<()> {
     let mut processed = 0;
     let mut buffer = [0_u8; IO_CHUNK_BYTES];
     while processed < MAX_PTY_BYTES_PER_TICK {
         match master.read(&mut buffer) {
-            Ok(0) => return Ok(()),
+            Ok(0) => {
+                trace_event(trace, "pty_eof");
+                return Ok(());
+            }
             Ok(length) => {
                 let bytes = &buffer[..length];
                 tail.extend(bytes);
@@ -380,9 +405,15 @@ fn drain_pty(
                 processed += length;
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-            Err(error) if error.raw_os_error() == Some(5) => return Ok(()),
+            Err(error) if error.raw_os_error() == Some(5) => {
+                trace_io_error(trace, "pty_eio", &error);
+                return Ok(());
+            }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) => return Err(error),
+            Err(error) => {
+                trace_io_error(trace, "pty_read_failed", &error);
+                return Err(error);
+            }
         }
     }
     Ok(())
@@ -656,6 +687,25 @@ fn read_startup_config() -> io::Result<StartupConfig> {
 fn trace_event(trace: &mut Option<Trace>, event: &'static str) {
     if let Some(trace) = trace {
         trace.event(event);
+    }
+}
+
+fn trace_io_error(trace: &mut Option<Trace>, event: &'static str, error: &io::Error) {
+    if let Some(trace) = trace {
+        trace.io_error(event, error);
+    }
+}
+
+fn trace_process_exit(trace: &mut Option<Trace>, exit: ProcessExit) {
+    if let Some(trace) = trace {
+        match exit {
+            ProcessExit::Code(code) => {
+                trace.metric("session_completed", "exit_code", u64::from(code))
+            }
+            ProcessExit::Signal(signal) => {
+                trace.metric("session_completed", "signal", u64::from(signal));
+            }
+        }
     }
 }
 

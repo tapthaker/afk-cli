@@ -218,7 +218,7 @@ Controls:
 - no terminal bytes in diagnostics or metadata;
 - bounded static or metadata-only errors;
 - owner-only metadata containing only safe lifecycle and completion fields;
-- optional lifecycle traces are owner-only, bounded to 1 MiB, and contain only timestamps and fixed event names;
+- optional lifecycle traces are owner-only, bounded to 1 MiB, and contain only timestamps, process/component identity, fixed event names, safe error kinds/OS codes, signal/exit reasons, and attachment transitions;
 - sentinel tests verify sensitive values are not emitted;
 - IPC and PTY payload types do not derive unrestricted debug output.
 

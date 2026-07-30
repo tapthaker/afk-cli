@@ -52,8 +52,37 @@ impl TestHome {
     }
 
     fn spawn_session_attachment(&self, creation_script: &str) -> Result<Child, Box<dyn Error>> {
+        self.spawn_session_attachment_with_options(&[
+            "session",
+            SESSION,
+            "--",
+            "/bin/sh",
+            "-c",
+            creation_script,
+        ])
+    }
+
+    fn spawn_traced_session_attachment(
+        &self,
+        creation_script: &str,
+    ) -> Result<Child, Box<dyn Error>> {
+        self.spawn_session_attachment_with_options(&[
+            "session",
+            SESSION,
+            "--trace",
+            "--",
+            "/bin/sh",
+            "-c",
+            creation_script,
+        ])
+    }
+
+    fn spawn_session_attachment_with_options(
+        &self,
+        arguments: &[&str],
+    ) -> Result<Child, Box<dyn Error>> {
         Ok(Command::new(env!("CARGO_BIN_EXE_afk"))
-            .args(["session", SESSION, "--", "/bin/sh", "-c", creation_script])
+            .args(arguments)
             .env("HOME", &self.path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -119,8 +148,13 @@ fn trace_option_writes_bounded_lifecycle_events_without_terminal_data() -> Resul
     );
     assert!(
         trace
-            .windows(b"event=runner_started".len())
-            .any(|part| part == b"event=runner_started")
+            .windows(b"component=runner event=runner_started".len())
+            .any(|part| part == b"component=runner event=runner_started")
+    );
+    assert!(
+        trace
+            .windows(b"component=attachment event=runner_socket_connected".len())
+            .any(|part| part == b"component=attachment event=runner_socket_connected")
     );
     assert!(
         trace
@@ -132,6 +166,47 @@ fn trace_option_writes_bounded_lifecycle_events_without_terminal_data() -> Resul
             .windows(secret.len())
             .any(|part| part == secret.as_bytes())
     );
+    Ok(())
+}
+
+#[test]
+fn abrupt_attachment_loss_records_the_runner_side_disconnect_reason() -> Result<(), Box<dyn Error>>
+{
+    let home = TestHome::new()?;
+    let mut attached = home.spawn_traced_session_attachment("sleep 30")?;
+    let trace_path = home
+        .path()
+        .join(".afk/run")
+        .join(format!("{SESSION}.trace"));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !fs::read(&trace_path).is_ok_and(|trace| {
+        trace
+            .windows(b"event=attachment_activated".len())
+            .any(|part| part == b"event=attachment_activated")
+    }) {
+        assert!(
+            Instant::now() < deadline,
+            "traced attachment did not activate"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    attached.kill()?;
+    attached.wait()?;
+    while !fs::read(&trace_path).is_ok_and(|trace| {
+        trace
+            .windows(b"event=attachment_read_failed error_kind=unexpected_eof".len())
+            .any(|part| part == b"event=attachment_read_failed error_kind=unexpected_eof")
+            || trace
+                .windows(b"event=attachment_poll_hangup".len())
+                .any(|part| part == b"event=attachment_poll_hangup")
+    }) {
+        assert!(
+            Instant::now() < deadline,
+            "runner did not trace attachment loss"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
     Ok(())
 }
 

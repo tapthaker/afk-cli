@@ -14,7 +14,7 @@ pub(crate) fn connect_or_start(
     command: &[OsString],
     output: &mut impl Write,
 ) -> io::Result<ProcessExit> {
-    let connect_error = match attach::attach(session, output) {
+    let connect_error = match attach::attach(session, trace, output) {
         Ok(status) => return Ok(status),
         Err(error) => error,
     };
@@ -41,7 +41,7 @@ pub(crate) fn connect_or_start(
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error),
     }
-    attach::attach(session, output)
+    attach::attach(session, trace, output)
 }
 
 pub(crate) fn stop(session: SessionId) -> io::Result<()> {

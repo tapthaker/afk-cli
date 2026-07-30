@@ -80,7 +80,7 @@ afk stop SESSION_ID
 - The outer terminal enters raw mode and is restored when attachment ends.
 - Closing SSH, stdin, or the Unix socket detaches without stopping the session process.
 - There is no detached creation mode.
-- `--trace` enables bounded, owner-only lifecycle diagnostics for a newly created runner. It records event names and timestamps, never terminal bytes, input, argv, environment values, or credentials.
+- `--trace` enables bounded, owner-only lifecycle diagnostics for the attachment and a newly created runner. It records timestamps, process/component identity, fixed event names, safe error kinds/OS codes, signal/exit reasons, and attachment transitions. It never records terminal bytes, input, argv, environment values, credentials, or arbitrary error text.
 
 ### `afk sessions`
 
