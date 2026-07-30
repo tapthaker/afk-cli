@@ -109,8 +109,10 @@ fn validate_dimensions(rows: u16, columns: u16) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::peer_uid;
+    use super::{RawTerminal, peer_uid};
+    use rustix::fs::{OFlags, fcntl_getfl};
     use rustix::process::getuid;
+    use rustix::termios::Winsize;
     use std::os::unix::net::UnixStream;
 
     #[test]
@@ -118,6 +120,25 @@ mod tests {
         let (stream, _peer) = UnixStream::pair()?;
 
         assert_eq!(peer_uid(&stream)?, getuid().as_raw());
+        Ok(())
+    }
+
+    #[test]
+    fn raw_terminal_keeps_shared_pty_output_blocking() -> std::io::Result<()> {
+        let pty = rustix_openpty::openpty(
+            None,
+            Some(&Winsize {
+                ws_row: 24,
+                ws_col: 80,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            }),
+        )?;
+        let shared_output = rustix::io::dup(&pty.user)?;
+
+        let _terminal = RawTerminal::enter(&pty.user)?;
+
+        assert!(!fcntl_getfl(&shared_output)?.contains(OFlags::NONBLOCK));
         Ok(())
     }
 }

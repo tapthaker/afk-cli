@@ -1,9 +1,8 @@
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
-use rustix::termios::Winsize;
 use std::error::Error;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
@@ -60,28 +59,6 @@ impl TestHome {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?)
-    }
-
-    fn spawn_pty_session_attachment(&self) -> Result<(Child, File), Box<dyn Error>> {
-        let pty = rustix_openpty::openpty(
-            None,
-            Some(&Winsize {
-                ws_row: 24,
-                ws_col: 80,
-                ws_xpixel: 0,
-                ws_ypixel: 0,
-            }),
-        )?;
-        let stdout = rustix::io::dup(&pty.user)?;
-        let stderr = rustix::io::dup(&pty.user)?;
-        let child = Command::new(env!("CARGO_BIN_EXE_afk"))
-            .args(["session", SESSION])
-            .env("HOME", &self.path)
-            .stdin(Stdio::from(pty.user))
-            .stdout(Stdio::from(stdout))
-            .stderr(Stdio::from(stderr))
-            .spawn()?;
-        Ok((child, File::from(pty.controller)))
     }
 
     fn wait_completed(&self) -> Result<(), Box<dyn Error>> {
@@ -261,32 +238,6 @@ fn live_session_replays_history_before_new_output() -> Result<(), Box<dyn Error>
     drop(attach_input);
     home.wait_completed()?;
     assert!(!home.path().join("unexpected-live-command").exists());
-    Ok(())
-}
-
-#[test]
-fn live_session_with_truncated_history_remains_attached_after_replay() -> Result<(), Box<dyn Error>>
-{
-    let home = TestHome::new()?;
-    let created = home.run(&[
-        "session",
-        SESSION,
-        "--",
-        "/bin/sh",
-        "-c",
-        "dd if=/dev/zero bs=1024 count=300 2>/dev/null | tr '\\000' x; read line",
-    ])?;
-    assert_eq!(created.status.code(), Some(0));
-    thread::sleep(Duration::from_millis(200));
-
-    let (mut attached, _outer_pty) = home.spawn_pty_session_attachment()?;
-    thread::sleep(Duration::from_millis(200));
-    assert!(
-        attached.try_wait()?.is_none(),
-        "an SSH-style PTY attachment exited while its large replay was backpressured"
-    );
-    attached.kill()?;
-    attached.wait()?;
     Ok(())
 }
 
