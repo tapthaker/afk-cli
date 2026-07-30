@@ -91,29 +91,39 @@ fn attach_live(mut stream: UnixStream, output: &mut impl Write) -> io::Result<Pr
             }
         }
 
-        if !stdin_closed {
-            stdin_closed = read_input(&mut input, &mut socket_output)?;
-        }
-
-        let socket_event = {
-            let mut descriptors = [PollFd::new(
-                &stream,
-                PollFlags::IN
-                    | if socket_output.is_empty() {
+        let (input_event, socket_event) = {
+            let mut descriptors = [
+                PollFd::new(
+                    &input,
+                    if stdin_closed {
                         PollFlags::empty()
                     } else {
-                        PollFlags::OUT
+                        PollFlags::IN
                     },
-            )];
+                ),
+                PollFd::new(
+                    &stream,
+                    PollFlags::IN
+                        | if socket_output.is_empty() {
+                            PollFlags::empty()
+                        } else {
+                            PollFlags::OUT
+                        },
+                ),
+            ];
             if let Err(error) = poll(&mut descriptors, Some(&POLL_INTERVAL)) {
                 if error == rustix::io::Errno::INTR {
                     continue;
                 }
                 return Err(io::Error::from(error));
             }
-            descriptors[0].revents()
+            (descriptors[0].revents(), descriptors[1].revents())
         };
 
+        if !stdin_closed && input_event.intersects(PollFlags::IN | PollFlags::HUP | PollFlags::ERR)
+        {
+            stdin_closed = read_input(&mut input, &mut socket_output)?;
+        }
         if socket_event.contains(PollFlags::OUT) {
             socket_output.flush(&mut stream)?;
         }

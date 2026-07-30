@@ -41,10 +41,6 @@ pub(crate) fn set_nonblocking(fd: impl AsFd) -> io::Result<OFlags> {
     Ok(previous)
 }
 
-pub(crate) fn restore_flags(fd: impl AsFd, flags: OFlags) -> io::Result<()> {
-    fcntl_setfl(fd, flags).map_err(io::Error::from)
-}
-
 pub(crate) fn window_size(fd: impl AsFd) -> io::Result<(u16, u16)> {
     let size = tcgetwinsize(fd).map_err(io::Error::from)?;
     validate_dimensions(size.ws_row, size.ws_col)?;
@@ -68,40 +64,30 @@ pub(crate) fn set_window_size(fd: impl AsFd, rows: u16, columns: u16) -> io::Res
 pub(crate) struct RawTerminal {
     fd: OwnedFd,
     original: Option<Termios>,
-    flags: OFlags,
 }
 
 impl RawTerminal {
     pub(crate) fn enter(fd: impl AsFd) -> io::Result<Self> {
         let owned = rustix::io::dup(&fd).map_err(io::Error::from)?;
-        let flags = set_nonblocking(&fd)?;
         let original = match tcgetattr(&fd) {
             Ok(original) => {
                 let mut raw = original.clone();
                 raw.make_raw();
-                if let Err(error) = tcsetattr(&fd, OptionalActions::Now, &raw) {
-                    let _ = restore_flags(&fd, flags);
-                    return Err(io::Error::from(error));
-                }
+                tcsetattr(&fd, OptionalActions::Now, &raw).map_err(io::Error::from)?;
                 Some(original)
             }
             Err(rustix::io::Errno::NOTTY | rustix::io::Errno::NODEV) => None,
-            Err(error) => {
-                let _ = restore_flags(&fd, flags);
-                return Err(io::Error::from(error));
-            }
+            Err(error) => return Err(io::Error::from(error)),
         };
         Ok(Self {
             fd: owned,
             original,
-            flags,
         })
     }
 }
 
 impl Drop for RawTerminal {
     fn drop(&mut self) {
-        let _ = restore_flags(&self.fd, self.flags);
         if let Some(original) = &self.original {
             let _ = tcsetattr(&self.fd, OptionalActions::Now, original);
         }
