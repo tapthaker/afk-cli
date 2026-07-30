@@ -14,6 +14,8 @@ use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
+use std::thread;
 
 const IO_CHUNK_BYTES: usize = 16 * 1024;
 const POLL_INTERVAL: Timespec = Timespec {
@@ -77,8 +79,8 @@ fn attach_live(mut stream: UnixStream, output: &mut impl Write) -> io::Result<Pr
         },
     )?;
     let mut decoder = Decoder::default();
+    let input_events = spawn_input_reader();
     let mut stdin_closed = false;
-    let mut input = stdin.lock();
 
     loop {
         if signals.terminate.load(Ordering::Relaxed) {
@@ -86,49 +88,51 @@ fn attach_live(mut stream: UnixStream, output: &mut impl Write) -> io::Result<Pr
             return Ok(ProcessExit::Code(0));
         }
         if signals.resize.swap(false, Ordering::Relaxed) {
-            if let Ok((rows, columns)) = window_size(input.as_fd()) {
+            if let Ok((rows, columns)) = window_size(stdin.as_fd()) {
                 queue_record(&mut socket_output, &Record::Resize { rows, columns })?;
             }
         }
+        if !stdin_closed {
+            stdin_closed = receive_input(&input_events, &mut socket_output)?;
+        }
 
-        let (input_event, socket_event) = {
-            let mut descriptors = [
-                PollFd::new(
-                    &input,
-                    if stdin_closed {
+        let socket_event = {
+            let mut descriptors = [PollFd::new(
+                &stream,
+                PollFlags::IN
+                    | if socket_output.is_empty() {
                         PollFlags::empty()
                     } else {
-                        PollFlags::IN
+                        PollFlags::OUT
                     },
-                ),
-                PollFd::new(
-                    &stream,
-                    PollFlags::IN
-                        | if socket_output.is_empty() {
-                            PollFlags::empty()
-                        } else {
-                            PollFlags::OUT
-                        },
-                ),
-            ];
+            )];
             if let Err(error) = poll(&mut descriptors, Some(&POLL_INTERVAL)) {
                 if error == rustix::io::Errno::INTR {
                     continue;
                 }
                 return Err(io::Error::from(error));
             }
-            (descriptors[0].revents(), descriptors[1].revents())
+            descriptors[0].revents()
         };
 
-        if !stdin_closed && input_event.intersects(PollFlags::IN | PollFlags::HUP | PollFlags::ERR)
-        {
-            stdin_closed = read_input(&mut input, &mut socket_output)?;
-        }
         if socket_event.contains(PollFlags::OUT) {
-            socket_output.flush(&mut stream)?;
+            if let Err(error) = socket_output.flush(&mut stream) {
+                if attachment_closed(&error) {
+                    drop(terminal);
+                    return Ok(ProcessExit::Code(0));
+                }
+                return Err(error);
+            }
+        }
+        if stdin_closed && socket_output.is_empty() {
+            drop(terminal);
+            return Ok(ProcessExit::Code(0));
         }
         if socket_event.intersects(PollFlags::IN | PollFlags::HUP | PollFlags::ERR) {
-            let records = read_records(&mut stream, &mut decoder)?;
+            let Some(records) = read_records(&mut stream, &mut decoder)? else {
+                drop(terminal);
+                return Ok(ProcessExit::Code(0));
+            };
             let mut wrote_output = false;
             for record in records {
                 match record {
@@ -156,28 +160,56 @@ fn attach_live(mut stream: UnixStream, output: &mut impl Write) -> io::Result<Pr
                 output.flush()?;
             }
         }
-        if stdin_closed && socket_output.is_empty() {
-            drop(terminal);
-            return Ok(ProcessExit::Code(0));
+    }
+}
+
+enum InputEvent {
+    Bytes(Vec<u8>),
+    Closed,
+    Failed(io::Error),
+}
+
+fn spawn_input_reader() -> Receiver<InputEvent> {
+    let capacity = MAX_ATTACHMENT_QUEUE_BYTES / IO_CHUNK_BYTES;
+    let (sender, receiver) = sync_channel(capacity);
+    thread::spawn(move || read_input(sender));
+    receiver
+}
+
+fn read_input(sender: SyncSender<InputEvent>) {
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let mut bytes = [0_u8; IO_CHUNK_BYTES];
+    loop {
+        let event = match input.read(&mut bytes) {
+            Ok(0) => InputEvent::Closed,
+            Ok(length) => InputEvent::Bytes(bytes[..length].to_vec()),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => InputEvent::Failed(error),
+        };
+        let finished = !matches!(event, InputEvent::Bytes(_));
+        if sender.send(event).is_err() || finished {
+            return;
         }
     }
 }
 
-fn read_input(input: &mut impl Read, socket_output: &mut ByteQueue) -> io::Result<bool> {
-    let mut bytes = [0_u8; IO_CHUNK_BYTES];
-    match input.read(&mut bytes) {
-        Ok(0) => Ok(true),
-        Ok(length) => {
-            queue_record(socket_output, &Record::Input(bytes[..length].to_vec()))?;
+fn receive_input(
+    receiver: &Receiver<InputEvent>,
+    socket_output: &mut ByteQueue,
+) -> io::Result<bool> {
+    match receiver.try_recv() {
+        Ok(InputEvent::Bytes(bytes)) => {
+            queue_record(socket_output, &Record::Input(bytes))?;
             Ok(false)
         }
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
-        Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(false),
-        Err(error) => Err(error),
+        Ok(InputEvent::Closed) | Err(TryRecvError::Disconnected) => Ok(true),
+        Ok(InputEvent::Failed(error)) => Err(error),
+        Err(TryRecvError::Empty) => Ok(false),
     }
 }
 
-fn read_records(stream: &mut UnixStream, decoder: &mut Decoder) -> io::Result<Vec<Record>> {
+fn read_records(stream: &mut UnixStream, decoder: &mut Decoder) -> io::Result<Option<Vec<Record>>> {
     let capacity = decoder.remaining_capacity().min(IO_CHUNK_BYTES);
     if capacity == 0 {
         return Err(io::Error::new(
@@ -187,17 +219,13 @@ fn read_records(stream: &mut UnixStream, decoder: &mut Decoder) -> io::Result<Ve
     }
     let mut buffer = vec![0_u8; capacity];
     match stream.read(&mut buffer) {
-        Ok(0) => {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "runner closed",
-            ));
-        }
+        Ok(0) => return Ok(None),
         Ok(length) => decoder
             .push(&buffer[..length])
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid IPC record"))?,
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(Vec::new()),
-        Err(error) if error.kind() == io::ErrorKind::Interrupted => return Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(Some(Vec::new())),
+        Err(error) if error.kind() == io::ErrorKind::Interrupted => return Ok(Some(Vec::new())),
+        Err(error) if attachment_closed(&error) => return Ok(None),
         Err(error) => return Err(error),
     }
     let mut records = Vec::new();
@@ -207,7 +235,17 @@ fn read_records(stream: &mut UnixStream, decoder: &mut Decoder) -> io::Result<Ve
     {
         records.push(record);
     }
-    Ok(records)
+    Ok(Some(records))
+}
+
+fn attachment_closed(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::BrokenPipe
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::UnexpectedEof
+    )
 }
 
 fn queue_record(queue: &mut ByteQueue, record: &Record) -> io::Result<()> {

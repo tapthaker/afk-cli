@@ -165,7 +165,7 @@ Socket closure without an exit record represents attachment loss. No acknowledge
 
 ### Forwarding
 
-The runner uses one nonblocking event loop for the inner PTY, listener, and active attachment.
+The runner uses one nonblocking event loop for the inner PTY, listener, and active attachment. Each short-lived attachment uses one blocking stdin reader with a bounded channel so SSH PTY input remains portable without changing the shared output descriptor to nonblocking mode.
 
 - PTY reads never wait for an attachment write.
 - The attachment flushes every received output batch so prompts and partial output without a newline are visible immediately.
