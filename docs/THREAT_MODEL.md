@@ -218,6 +218,7 @@ Controls:
 - no terminal bytes in diagnostics or metadata;
 - bounded static or metadata-only errors;
 - owner-only metadata containing only safe lifecycle and completion fields;
+- optional lifecycle traces are owner-only, bounded to 1 MiB, and contain only timestamps and fixed event names;
 - sentinel tests verify sensitive values are not emitted;
 - IPC and PTY payload types do not derive unrestricted debug output.
 
@@ -254,7 +255,8 @@ The initial implementation defines and tests at least:
 - stop grace period: five seconds;
 - command argv: 256 entries and 64 KiB aggregate;
 - PTY bytes processed per event-loop tick: 256 KiB;
-- completed metadata retention: 24 hours.
+- completed metadata retention: 24 hours;
+- optional lifecycle trace: 1 MiB.
 
 There is no replay cursor, scrollback model, terminal snapshot, or separate input retention in the initial design. Live replay is a raw byte tail and may duplicate bytes that the previous attachment received.
 

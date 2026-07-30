@@ -94,7 +94,7 @@ Release checksums, provenance attestations, supported asset names, and verificat
 ## Commands
 
 ```bash
-afk session SESSION_ID [-- COMMAND [ARG...]]
+afk session SESSION_ID [--trace] [-- COMMAND [ARG...]]
 afk sessions [--json]
 afk stop SESSION_ID
 ```
@@ -108,7 +108,9 @@ SESSION_ID="$(openssl rand -hex 16)"
 ssh -t host.example afk session "$SESSION_ID"
 ```
 
-With no command, a new session starts the account's default shell. To run a specific command, place its argv after `--`:
+With no command, a new session starts the account's default shell. To diagnose lifecycle or disconnect problems, add `--trace`; the runner writes bounded, owner-only lifecycle events to `~/.afk/run/<session-id>.trace` without recording terminal bytes, command arguments, environment values, or credentials. Trace files are retained and expired with their session metadata.
+
+To run a specific command, place its argv after `--`:
 
 ```bash
 ssh -t host.example afk session "$SESSION_ID" -- htop

@@ -10,6 +10,7 @@ use crate::platform::unix::{
     become_session_leader, create_pty, peer_uid, set_nonblocking, set_window_size,
 };
 use crate::registry::{Registry, SessionFiles, SessionMetadata, now_seconds};
+use crate::trace::Trace;
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::fd::AsFd;
 use rustix::fs::Mode;
@@ -35,6 +36,7 @@ const POLL_INTERVAL: Timespec = Timespec {
 
 pub(crate) fn launch_runner(
     session: SessionId,
+    trace: bool,
     command: &[OsString],
     rows: u16,
     columns: u16,
@@ -50,7 +52,7 @@ pub(crate) fn launch_runner(
         .stderr(Stdio::null())
         .spawn()?;
 
-    write_startup_config(&mut launcher, command, rows, columns)?;
+    write_startup_config(&mut launcher, trace, command, rows, columns)?;
     let mut response = [STARTUP_FAILED];
     if let Err(error) = launcher.read_exact(&mut response) {
         let _ = process.wait();
@@ -109,6 +111,7 @@ pub(crate) fn hidden_child(command: Vec<OsString>) -> io::Result<()> {
 }
 
 struct StartupConfig {
+    trace: bool,
     command: Vec<OsString>,
     rows: u16,
     columns: u16,
@@ -119,6 +122,11 @@ fn start_runner(session: SessionId, config: StartupConfig) -> io::Result<()> {
     umask(Mode::RWXG | Mode::RWXO);
     let registry = Registry::open()?;
     let files = registry.bind_session(session)?;
+    let mut trace = config
+        .trace
+        .then(|| Trace::create(&files.paths.trace))
+        .transpose()?;
+    trace_event(&mut trace, "runner_started");
     let (master, slave) = create_pty(config.rows, config.columns)?;
     let command = if config.command.is_empty() {
         vec![default_shell()]
@@ -134,6 +142,7 @@ fn start_runner(session: SessionId, config: StartupConfig) -> io::Result<()> {
         .stdout(Stdio::from(slave_stdout))
         .stderr(Stdio::from(slave_stderr))
         .spawn()?;
+    trace_event(&mut trace, "child_started");
     let started_at = now_seconds()?;
     let child_pid = child.id();
     let runner_pid = u32::try_from(getpid().as_raw_nonzero().get())
@@ -154,7 +163,7 @@ fn start_runner(session: SessionId, config: StartupConfig) -> io::Result<()> {
     let master = File::from(master);
     set_nonblocking(&master)?;
     run_event_loop(
-        session, registry, files, master, &mut child, runner_pid, child_pid, started_at,
+        session, registry, files, master, &mut child, runner_pid, child_pid, started_at, trace,
     )
 }
 
@@ -168,6 +177,7 @@ fn run_event_loop(
     runner_pid: u32,
     child_pid: u32,
     started_at: u64,
+    mut trace: Option<Trace>,
 ) -> io::Result<()> {
     let mut tail = OutputTail::new(OUTPUT_TAIL_BYTES);
     let mut pty_input = ByteQueue::new(MAX_ATTACHMENT_QUEUE_BYTES);
@@ -179,12 +189,14 @@ fn run_event_loop(
         let had_attachment = active.is_some();
         drain_pty(&mut master, &mut tail, &mut active)?;
         if had_attachment && active.is_none() {
+            trace_event(&mut trace, "attachment_output_queue_full");
             registry.write_metadata(
                 &files.paths,
                 &live_metadata(session, runner_pid, child_pid, started_at, false),
             )?;
         }
         if let Some(status) = child.try_wait()? {
+            trace_event(&mut trace, "child_exited");
             break process_exit(status);
         }
 
@@ -229,6 +241,7 @@ fn run_event_loop(
         drop(descriptors);
 
         if events[0].contains(PollFlags::OUT) && pty_input.flush(&mut master).is_err() {
+            trace_event(&mut trace, "pty_input_write_failed");
             active = None;
         }
         if let Some(index) = active_index {
@@ -238,6 +251,7 @@ fn run_event_loop(
                     connection.output.flush(&mut connection.stream).is_err()
                 })
             {
+                trace_event(&mut trace, "attachment_write_failed");
                 active = None;
             }
             if active.is_some() && event.intersects(PollFlags::IN | PollFlags::HUP | PollFlags::ERR)
@@ -245,10 +259,14 @@ fn run_event_loop(
                 match read_records(active.as_mut()) {
                     Ok(records) => {
                         if !apply_active_records(records, &mut pty_input, &master)? {
+                            trace_event(&mut trace, "attachment_input_rejected");
                             active = None;
                         }
                     }
-                    Err(_) => active = None,
+                    Err(_) => {
+                        trace_event(&mut trace, "attachment_read_failed");
+                        active = None;
+                    }
                 }
             }
             if active.is_none() {
@@ -273,6 +291,10 @@ fn run_event_loop(
                                     enqueue_replay(&mut connection, &tail)?;
                                     let remaining: Vec<Record> = records.collect();
                                     if apply_active_records(remaining, &mut pty_input, &master)? {
+                                        if active.is_some() {
+                                            trace_event(&mut trace, "attachment_replaced");
+                                        }
+                                        trace_event(&mut trace, "attachment_activated");
                                         active = Some(connection);
                                         registry.write_metadata(
                                             &files.paths,
@@ -284,14 +306,21 @@ fn run_event_loop(
                                 }
                             }
                             Some(Record::Stop) if records.next().is_none() => {
+                                trace_event(&mut trace, "stop_requested");
                                 candidate = None;
                                 stop_requested = true;
                             }
-                            _ => candidate = None,
+                            _ => {
+                                trace_event(&mut trace, "candidate_rejected");
+                                candidate = None;
+                            }
                         }
                     }
                     Ok(_) => {}
-                    Err(_) => candidate = None,
+                    Err(_) => {
+                        trace_event(&mut trace, "candidate_read_failed");
+                        candidate = None;
+                    }
                 }
             }
         }
@@ -551,6 +580,7 @@ fn process_exit(status: std::process::ExitStatus) -> ProcessExit {
 
 fn write_startup_config(
     stream: &mut UnixStream,
+    trace: bool,
     command: &[OsString],
     rows: u16,
     columns: u16,
@@ -559,6 +589,7 @@ fn write_startup_config(
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many command arguments"))?;
     stream.write_all(&rows.to_be_bytes())?;
     stream.write_all(&columns.to_be_bytes())?;
+    stream.write_all(&[u8::from(trace)])?;
     stream.write_all(&count.to_be_bytes())?;
     for argument in command {
         let bytes = argument.as_os_str().as_bytes();
@@ -575,6 +606,16 @@ fn read_startup_config() -> io::Result<StartupConfig> {
     let mut stdin = std::io::stdin().lock();
     let rows = read_u16(&mut stdin)?;
     let columns = read_u16(&mut stdin)?;
+    let trace = match read_u8(&mut stdin)? {
+        0 => false,
+        1 => true,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid trace option",
+            ));
+        }
+    };
     if rows == 0 || columns == 0 || rows > 4096 || columns > 4096 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -605,10 +646,23 @@ fn read_startup_config() -> io::Result<StartupConfig> {
         command.push(OsString::from_vec(bytes));
     }
     Ok(StartupConfig {
+        trace,
         command,
         rows,
         columns,
     })
+}
+
+fn trace_event(trace: &mut Option<Trace>, event: &'static str) {
+    if let Some(trace) = trace {
+        trace.event(event);
+    }
+}
+
+fn read_u8(input: &mut impl Read) -> io::Result<u8> {
+    let mut byte = [0_u8; 1];
+    input.read_exact(&mut byte)?;
+    Ok(byte[0])
 }
 
 fn read_u16(input: &mut impl Read) -> io::Result<u16> {

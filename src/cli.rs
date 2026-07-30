@@ -8,6 +8,7 @@ pub(crate) enum Command {
     Version,
     Session {
         session: SessionId,
+        trace: bool,
         command: Vec<OsString>,
     },
     Sessions {
@@ -65,7 +66,11 @@ fn parse_session(arguments: &[OsString]) -> Result<Command, ParseError> {
         return Err(ParseError::InvalidArguments);
     };
     let session = parse_session_id(session)?;
-    let command = match &arguments[1..] {
+    let (trace, remaining) = match &arguments[1..] {
+        [option, remaining @ ..] if option.as_encoded_bytes() == b"--trace" => (true, remaining),
+        remaining => (false, remaining),
+    };
+    let command = match remaining {
         [] => Vec::new(),
         [separator, command @ ..]
             if separator.as_encoded_bytes() == b"--" && !command.is_empty() =>
@@ -75,7 +80,11 @@ fn parse_session(arguments: &[OsString]) -> Result<Command, ParseError> {
         }
         _ => return Err(ParseError::InvalidArguments),
     };
-    Ok(Command::Session { session, command })
+    Ok(Command::Session {
+        session,
+        trace,
+        command,
+    })
 }
 
 fn parse_session_command(
@@ -148,6 +157,7 @@ mod tests {
             parse(["session", SESSION]),
             Ok(Command::Session {
                 session,
+                trace: false,
                 command: Vec::new()
             })
         );
@@ -155,7 +165,24 @@ mod tests {
             parse(["session", SESSION, "--", "/bin/echo", "hello"]),
             Ok(Command::Session {
                 session,
+                trace: false,
                 command: vec![OsString::from("/bin/echo"), OsString::from("hello")],
+            })
+        );
+        assert_eq!(
+            parse(["session", SESSION, "--trace"]),
+            Ok(Command::Session {
+                session,
+                trace: true,
+                command: Vec::new(),
+            })
+        );
+        assert_eq!(
+            parse(["session", SESSION, "--trace", "--", "/bin/echo"]),
+            Ok(Command::Session {
+                session,
+                trace: true,
+                command: vec![OsString::from("/bin/echo")],
             })
         );
         assert_eq!(parse(["sessions"]), Ok(Command::Sessions { json: false }));
@@ -184,6 +211,10 @@ mod tests {
         );
         assert_eq!(
             parse(["session", SESSION, "/bin/sh"]),
+            Err(ParseError::InvalidArguments)
+        );
+        assert_eq!(
+            parse(["session", SESSION, "--trace", "--trace"]),
             Err(ParseError::InvalidArguments)
         );
         assert_eq!(

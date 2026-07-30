@@ -91,6 +91,51 @@ impl Drop for TestHome {
 }
 
 #[test]
+fn trace_option_writes_bounded_lifecycle_events_without_terminal_data() -> Result<(), Box<dyn Error>>
+{
+    let home = TestHome::new()?;
+    let secret = "synthetic-terminal-secret";
+    let created = home.run(&[
+        "session",
+        SESSION,
+        "--trace",
+        "--",
+        "/bin/sh",
+        "-c",
+        &format!("printf '{secret}'; exit 0"),
+    ])?;
+    assert!(created.status.success());
+    home.wait_completed()?;
+
+    let trace_path = home
+        .path()
+        .join(".afk/run")
+        .join(format!("{SESSION}.trace"));
+    let trace = fs::read(&trace_path)?;
+    assert!(trace.len() <= 1024 * 1024);
+    assert_eq!(
+        fs::metadata(trace_path)?.permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(
+        trace
+            .windows(b"event=runner_started".len())
+            .any(|part| part == b"event=runner_started")
+    );
+    assert!(
+        trace
+            .windows(b"event=child_exited".len())
+            .any(|part| part == b"event=child_exited")
+    );
+    assert!(
+        !trace
+            .windows(secret.len())
+            .any(|part| part == secret.as_bytes())
+    );
+    Ok(())
+}
+
+#[test]
 fn completed_session_prints_retained_output_and_returns_child_status() -> Result<(), Box<dyn Error>>
 {
     let home = TestHome::new()?;

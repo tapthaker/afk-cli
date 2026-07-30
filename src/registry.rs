@@ -103,6 +103,7 @@ pub(crate) struct SessionPaths {
     pub(crate) metadata: PathBuf,
     pub(crate) lock: PathBuf,
     pub(crate) output: PathBuf,
+    pub(crate) trace: PathBuf,
 }
 
 impl Registry {
@@ -130,6 +131,7 @@ impl Registry {
             metadata: self.root.join(format!("{prefix}.json")),
             lock: self.root.join(format!("{prefix}.lock")),
             output: self.root.join(format!("{prefix}.out")),
+            trace: self.root.join(format!("{prefix}.trace")),
         };
         if paths.socket.as_os_str().as_bytes().len() > UNIX_SOCKET_PATH_BYTES {
             return Err(invalid("AFK runtime socket path is too long"));
@@ -309,12 +311,14 @@ impl Registry {
 
     fn remove_completed(&self, paths: &SessionPaths) -> io::Result<()> {
         remove_if_present(&paths.output)?;
+        remove_if_present(&paths.trace)?;
         remove_if_present(&paths.metadata)
     }
 
     fn remove_stale_live(&self, paths: &SessionPaths) -> io::Result<()> {
         remove_owned_entry_if_present(&paths.socket, self.uid, PathKind::Socket, 0o600)?;
         remove_owned_entry_if_present(&paths.lock, self.uid, PathKind::Regular, 0o600)?;
+        remove_owned_entry_if_present(&paths.trace, self.uid, PathKind::Regular, 0o600)?;
         remove_owned_entry_if_present(&paths.metadata, self.uid, PathKind::Regular, 0o600)
     }
 }

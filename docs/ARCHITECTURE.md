@@ -57,7 +57,7 @@ AFK does not provide:
 ```text
 afk --help
 afk --version
-afk session SESSION_ID [-- COMMAND [ARG...]]
+afk session SESSION_ID [--trace] [-- COMMAND [ARG...]]
 afk sessions [--json]
 afk stop SESSION_ID
 ```
@@ -80,6 +80,7 @@ afk stop SESSION_ID
 - The outer terminal enters raw mode and is restored when attachment ends.
 - Closing SSH, stdin, or the Unix socket detaches without stopping the session process.
 - There is no detached creation mode.
+- `--trace` enables bounded, owner-only lifecycle diagnostics for a newly created runner. It records event names and timestamps, never terminal bytes, input, argv, environment values, or credentials.
 
 ### `afk sessions`
 
@@ -231,6 +232,7 @@ Per-session files:
 ~/.afk/run/<session-id>.json
 ~/.afk/run/<session-id>.lock
 ~/.afk/run/<session-id>.out
+~/.afk/run/<session-id>.trace    # only when --trace creates the runner
 ```
 
 The JSON file is live metadata while the runner exists. After observed process completion, it is atomically rewritten as the bounded previous-session record containing the exit code or signal. Per-session records avoid a shared completion-file write race between independent runners.
@@ -248,6 +250,7 @@ Requirements:
 - bounded metadata read before JSON parsing;
 - completed output mode 0600 and size at most 256 KiB;
 - atomic completed-output replacement;
+- optional trace mode 0600, at most 1 MiB, and retained/expired with session metadata;
 - stale cleanup verified through the live socket, not PID alone.
 
 The home-relative root does not depend on `$XDG_RUNTIME_DIR`, which may disappear when the final login ends.
@@ -292,6 +295,7 @@ PTY bytes processed per tick  256 KiB
 stop grace period              5 seconds
 command arguments              256 entries / 64 KiB aggregate
 completed metadata retention   24 hours
+optional lifecycle trace         1 MiB
 ```
 
 Security requirements:

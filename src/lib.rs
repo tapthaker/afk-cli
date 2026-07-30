@@ -19,6 +19,8 @@ mod registry;
 mod runner;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod trace;
 
 use cli::{Command, ParseError};
 use std::ffi::OsStr;
@@ -55,7 +57,7 @@ const HELP: &str = "AFK CLI keeps a remote terminal process alive across SSH dis
 Usage:\n\
     afk --help\n\
     afk --version\n\
-    afk session SESSION_ID [-- COMMAND [ARG...]]\n\
+    afk session SESSION_ID [--trace] [-- COMMAND [ARG...]]\n\
     afk sessions [--json]\n\
     afk stop SESSION_ID\n\
 \n\
@@ -105,10 +107,12 @@ fn run_session_command(
     stderr: &mut impl Write,
 ) -> ExitStatus {
     let result = match command {
-        Command::Session { session, command } => {
-            session::connect_or_start(session, &command, stdout)
-                .map(|status| ExitStatus::Child(status.status_code()))
-        }
+        Command::Session {
+            session,
+            trace,
+            command,
+        } => session::connect_or_start(session, trace, &command, stdout)
+            .map(|status| ExitStatus::Child(status.status_code())),
         Command::Sessions { json } => session::sessions(json, stdout).map(|()| ExitStatus::Success),
         Command::Stop { session } => session::stop(session).map(|()| ExitStatus::Success),
         Command::HiddenRunner { session } => {

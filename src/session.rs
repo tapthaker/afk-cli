@@ -10,6 +10,7 @@ use std::io::{self, Write};
 
 pub(crate) fn connect_or_start(
     session: SessionId,
+    trace: bool,
     command: &[OsString],
     output: &mut impl Write,
 ) -> io::Result<ProcessExit> {
@@ -35,7 +36,7 @@ pub(crate) fn connect_or_start(
 
     let stdin = std::io::stdin();
     let (rows, columns) = window_size(stdin.as_fd()).unwrap_or((24, 80));
-    match runner::launch_runner(session, command, rows, columns) {
+    match runner::launch_runner(session, trace, command, rows, columns) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error),
